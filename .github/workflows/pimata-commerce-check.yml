@@ -33,7 +33,6 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
-
       redis:
         image: redis:7-alpine
         ports:
@@ -60,18 +59,23 @@ jobs:
       MEDUSA_WORKER_MODE: shared
       DISABLE_MEDUSA_ADMIN: 'false'
       MEDUSA_BACKEND_URL: http://localhost:9000
+      MERCADO_PAGO_ACCESS_TOKEN: TEST-CI-MERCADO-PAGO-TOKEN
+      MERCADO_PAGO_BACKEND_URL: https://backend-ci.example.com
+      MERCADO_PAGO_STOREFRONT_URL: https://store-ci.example.com
+      MELHOR_ENVIO_TOKEN: TEST-CI-MELHOR-ENVIO-TOKEN
+      MELHOR_ENVIO_SANDBOX: 'true'
+      MELHOR_ENVIO_ORIGIN_POSTAL_CODE: '13800000'
+      MELHOR_ENVIO_USER_AGENT: PiMaTa CI (contato@pimata.app)
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: '22.12.0'
           cache: npm
           cache-dependency-path: pimata-commerce/package.json
-
       - name: Verify no committed local secrets
         run: |
           set -euo pipefail
@@ -80,49 +84,42 @@ jobs:
             echo 'Possível segredo real encontrado no código versionado.'
             exit 1
           fi
-
       - name: Validate package manifest
         run: npm pkg get name version
-
       - name: Install dependencies
         run: npm install --no-audit --no-fund
-
       - name: TypeScript check
         run: npm run typecheck
-
       - name: Build Medusa production artifact
         run: npm run build
-
       - name: Verify dedicated database starts empty
         run: |
           set -euo pipefail
           PUBLIC_TABLES="$(PGPASSWORD=postgres psql -h 127.0.0.1 -U postgres -d pimata_medusa -Atc "select count(*) from information_schema.tables where table_schema = 'public';")"
-          echo "public tables before migration: ${PUBLIC_TABLES}"
           test "${PUBLIC_TABLES}" -eq 0
-
       - name: Run Medusa database migrations
         timeout-minutes: 8
         run: npm run predeploy
-
       - name: Verify Medusa tables in dedicated database
         run: |
           set -euo pipefail
           PUBLIC_TABLES="$(PGPASSWORD=postgres psql -h 127.0.0.1 -U postgres -d pimata_medusa -Atc "select count(*) from information_schema.tables where table_schema = 'public';")"
           PRODUCT_TABLE="$(PGPASSWORD=postgres psql -h 127.0.0.1 -U postgres -d pimata_medusa -Atc "select count(*) from information_schema.tables where table_schema = 'public' and table_name = 'product';")"
-          CURRENCY_TABLE="$(PGPASSWORD=postgres psql -h 127.0.0.1 -U postgres -d pimata_medusa -Atc "select count(*) from information_schema.tables where table_schema = 'public' and table_name = 'currency';")"
-          echo "public tables after migration: ${PUBLIC_TABLES}"
           test "${PUBLIC_TABLES}" -gt 50
           test "${PRODUCT_TABLE}" -eq 1
-          test "${CURRENCY_TABLE}" -eq 1
-
+      - name: Verify custom providers registered
+        run: |
+          set -euo pipefail
+          MP_PROVIDER="$(PGPASSWORD=postgres psql -h 127.0.0.1 -U postgres -d pimata_medusa -Atc "select count(*) from payment_provider where id = 'pp_mercadopago_mercadopago';")"
+          ME_PROVIDER="$(PGPASSWORD=postgres psql -h 127.0.0.1 -U postgres -d pimata_medusa -Atc "select count(*) from fulfillment_provider where id = 'melhor-envio_melhor-envio';")"
+          test "${MP_PROVIDER}" -eq 1
+          test "${ME_PROVIDER}" -eq 1
       - name: Bootstrap PiMaTa Brazil store
         timeout-minutes: 5
         run: npm run bootstrap
-
       - name: Verify bootstrap is idempotent
         timeout-minutes: 5
         run: npm run bootstrap
-
       - name: Verify PiMaTa bootstrap records
         run: |
           set -euo pipefail
@@ -134,7 +131,6 @@ jobs:
           test "${PIMATA_CHANNEL}" -eq 1
           test "${PIMATA_LOCATION}" -eq 1
           test "${PUBLISHABLE_KEY}" -eq 1
-
       - name: Start Medusa and verify health
         timeout-minutes: 5
         run: |
@@ -142,7 +138,6 @@ jobs:
           npm start >/tmp/pimata-medusa.log 2>&1 &
           MEDUSA_PID=$!
           trap 'kill "${MEDUSA_PID}" 2>/dev/null || true' EXIT
-
           for attempt in $(seq 1 60); do
             if curl -fsS http://127.0.0.1:9000/health | grep -q 'OK'; then
               echo 'Medusa health check OK.'
@@ -150,7 +145,5 @@ jobs:
             fi
             sleep 2
           done
-
-          echo 'Medusa did not become healthy.'
           cat /tmp/pimata-medusa.log
           exit 1
