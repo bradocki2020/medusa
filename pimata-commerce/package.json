@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@medusajs/admin-sdk": "2.20.1",
+    "@medusajs/caching-redis": "2.20.1",
     "@medusajs/cli": "2.20.1",
     "@medusajs/framework": "2.20.1",
     "@medusajs/medusa": "2.20.1"
