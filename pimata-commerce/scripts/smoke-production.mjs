@@ -44,6 +44,18 @@ if (status.mercado_pago_webhook_signature_configured !== true) {
 }
 if (status.melhor_envio_configured !== true) fail("Melhor Envio provider is not configured")
 
+const setupResponse = await fetch(`${baseUrl}/pimata/setup`, {
+  method: "POST",
+  headers: {
+    "content-type": "application/json",
+    "x-pimata-setup-secret": "production-smoke-must-not-work",
+  },
+  body: JSON.stringify({ import_legacy: false }),
+})
+if (setupResponse.status !== 404) {
+  fail(`Production setup route is not disabled (expected 404, got ${setupResponse.status})`)
+}
+
 const fakeHash = "0".repeat(64)
 const webhookResponse = await fetch(
   `${baseUrl}/hooks/payment/mercadopago_mercadopago?data.id=pimata-smoke-invalid`,
@@ -77,5 +89,6 @@ console.log(JSON.stringify({
   mercado_pago_configured: status.mercado_pago_configured,
   webhook_signature_configured: status.mercado_pago_webhook_signature_configured,
   melhor_envio_configured: status.melhor_envio_configured,
+  setup_route_disabled: setupResponse.status === 404,
   invalid_webhook_rejected: webhookResponse.status === 401,
 }, null, 2))
