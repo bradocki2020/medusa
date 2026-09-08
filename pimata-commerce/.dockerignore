@@ -1,0 +1,11 @@
+node_modules
+.medusa
+.cache
+.env
+.env.*
+!.env.template
+npm-debug.log*
+coverage
+.git
+.github
+README.md
