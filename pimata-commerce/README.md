@@ -19,7 +19,8 @@ O fluxo `src/workflows/create-venda-unica.ts` cria uma peça com:
 - `allow_backorder: false`;
 - estoque inicial exatamente `1` no local padrão da loja;
 - metadata `pimata_sale_type=venda_unica` e `pimata_single_stock=true`;
-- `pimata_source_id`, condição e preço anterior quando fornecidos.
+- `pimata_source_id`, condição e preço anterior quando fornecidos;
+- peso e dimensões físicas quando fornecidos, usados pela cotação de frete.
 
 O endpoint administrativo é:
 
@@ -40,7 +41,11 @@ Exemplo de corpo:
   "images": ["https://exemplo.com/foto.jpg"],
   "source_id": "vu-exemplo-001",
   "condition": "novo",
-  "requires_shipping": true
+  "requires_shipping": true,
+  "weight_kg": 0.1,
+  "width_cm": 20,
+  "height_cm": 8,
+  "length_cm": 25
 }
 ```
 
@@ -60,10 +65,13 @@ O script `src/scripts/bootstrap-pimata.ts` configura de forma idempotente:
 - canal de vendas `PiMaTa Online`;
 - local `Estoque PiMaTa`;
 - perfil padrão para produtos físicos;
+- fulfillment set nacional;
+- retirada PiMaTa grátis;
+- Melhor Envio calculado quando configurado;
 - publishable API key `PiMaTa Storefront`;
 - canal e estoque como padrões da store.
 
-Ele pode ser executado novamente sem a intenção de duplicar esses recursos. A CI executa o bootstrap duas vezes e verifica que os registros principais continuam únicos.
+Ele pode ser executado novamente sem duplicar os recursos principais. A CI executa o bootstrap duas vezes e verifica que os registros continuam únicos.
 
 O endereço criado no estoque é deliberadamente um placeholder operacional. O endereço completo deve ser configurado no Admin antes da produção.
 
@@ -85,10 +93,14 @@ npm run import:legacy
 O importador:
 
 1. lê somente `published=true` e `sold=false`;
-2. preserva `id`, `slug`, título, descrição, condição e preço;
-3. importa URLs HTTP/HTTPS das três imagens atuais;
-4. cria o produto com estoque inicial 1;
-5. não importa novamente um produto cujo `handle` já exista.
+2. preserva `id`, `slug`, título, descrição, condição, preço atual e preço anterior;
+3. preserva peso e dimensões do anúncio;
+4. importa até três imagens HTTP/HTTPS por produto;
+5. quando uma imagem antiga ainda existir somente como `data:image/...`, usa `venda-unica-image?slot=1/2/3` como ponte HTTP sem gravar base64 no catálogo Medusa;
+6. cria o produto com estoque inicial exatamente 1;
+7. não importa novamente um produto cujo `handle` já exista.
+
+Os anúncios ativos do legado já tiveram sua mídia normalizada para URLs persistentes no Cloudinary: 10 imagens principais, 3 segundas imagens e 1 terceira imagem. Os `data:` originais permanecem no Supabase somente como fallback.
 
 ## Banco de dados — isolamento obrigatório
 
@@ -121,50 +133,62 @@ Ambas usam o mesmo `DATABASE_URL` e `REDIS_URL`.
 
 A configuração usa Redis para cache, event bus, workflow engine e locking, com namespaces/prefixos próprios da PiMaTa onde aplicável.
 
+## Dependências reproduzíveis
+
+`package-lock.json` é versionado e o projeto usa `npm ci` na CI e no container. Isso impede que deploys sucessivos resolvam versões transitivas diferentes sem uma alteração explícita do lockfile.
+
+O `medusa build` gera `.medusa/server` com seu próprio `package.json` e lockfile de runtime. A CI também executa `npm ci --omit=dev` nesse artefato antes de iniciá-lo em modo de produção.
+
 ## Container
 
 `Dockerfile` gera uma imagem de produção baseada em Node 22.12.0. A mesma imagem pode ser usada para servidor e worker, mudando apenas as variáveis de ambiente.
+
+O estágio de build usa o lockfile raiz com `npm ci`; o estágio final usa o lockfile gerado pelo próprio `.medusa/server` com `npm ci --omit=dev`.
 
 ## Segurança
 
 `JWT_SECRET` e `COOKIE_SECRET` nunca devem ser versionados. O `medusa-config.ts` bloqueia a inicialização em produção se eles, `DATABASE_URL` ou `REDIS_URL` estiverem ausentes.
 
-O arquivo `.env.template` contém somente placeholders.
+O arquivo `.env.template` contém somente placeholders. O workflow dedicado usa somente permissão `contents: read`.
 
 ## Verificação automatizada
 
 O workflow `PiMaTa Commerce Check` valida:
 
 1. ausência de segredos versionados;
-2. instalação das dependências;
-3. TypeScript;
-4. `medusa build`;
-5. PostgreSQL 17 dedicado e inicialmente vazio;
-6. `medusa db:migrate`;
-7. criação das tabelas principais do Medusa;
-8. Redis 7;
-9. bootstrap Brasil;
-10. segunda execução do bootstrap para validar idempotência;
-11. registros principais da PiMaTa no banco;
-12. inicialização real do backend;
-13. `GET /health` respondendo `OK`.
+2. instalação determinística com `npm ci`;
+3. integridade de `package.json` e `package-lock.json`;
+4. TypeScript;
+5. `medusa build`;
+6. existência e instalação do lockfile do artefato `.medusa/server`;
+7. PostgreSQL 17 dedicado e inicialmente vazio;
+8. `medusa db:migrate`;
+9. registro real dos providers Mercado Pago e Melhor Envio;
+10. Redis 7;
+11. bootstrap Brasil;
+12. segunda execução do bootstrap para validar idempotência;
+13. registros comerciais principais da PiMaTa no banco;
+14. inicialização do **artefato compilado** em `NODE_ENV=production`;
+15. `GET /health` respondendo `OK`;
+16. `GET /pimata/status` confirmando serviço PiMaTa, banco PostgreSQL dedicado e Redis configurado.
 
 Depois de iniciar o backend:
 
 - health nativo: `GET /health` deve responder `OK`;
-- status PiMaTa: `GET /pimata/status` retorna a versão e o modo do backend;
+- status PiMaTa: `GET /pimata/status` retorna versão, isolamento do banco e estado dos providers;
 - Admin Medusa: `/app` no endereço do servidor.
 
 ## Plano de corte sem downtime
 
 1. manter `venda.pimata.app` atual em produção;
 2. provisionar PostgreSQL dedicado e Redis;
-3. subir Medusa em um hostname separado;
+3. subir Medusa em um hostname separado, com instâncias `server` e `worker`;
 4. executar migrations e `npm run bootstrap`;
 5. configurar o endereço real de origem/estoque;
-6. importar os anúncios ativos com `npm run import:legacy`;
-7. validar catálogo, estoque, checkout, pagamento e frete;
-8. conectar uma storefront nova ao Store API do Medusa;
-9. somente após os testes, trocar a home de `venda.pimata.app` para a nova storefront.
+6. configurar URLs e segredos reais de Mercado Pago e Melhor Envio;
+7. importar os anúncios ativos com `npm run import:legacy`;
+8. validar catálogo, estoque, checkout, pagamento, webhook e frete ponta a ponta;
+9. conectar uma storefront nova ao Store API do Medusa;
+10. somente após os testes, trocar a home de `venda.pimata.app` para a nova storefront.
 
-O domínio atual não deve ser apontado para o Medusa antes da etapa 9.
+O domínio atual não deve ser apontado para o Medusa antes da etapa 10.

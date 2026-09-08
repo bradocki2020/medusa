@@ -3,8 +3,8 @@
 FROM node:22.12.0-bookworm-slim AS builder
 WORKDIR /app
 
-COPY package.json ./
-RUN npm install --no-audit --no-fund
+COPY package.json package-lock.json ./
+RUN npm ci --no-audit --no-fund
 
 COPY . .
 RUN npm run build
@@ -16,7 +16,7 @@ ENV NODE_ENV=production
 ENV PORT=9000
 
 COPY --from=builder /app/.medusa/server ./
-RUN npm install --omit=dev --no-audit --no-fund
+RUN npm ci --omit=dev --no-audit --no-fund
 
 EXPOSE 9000
 
