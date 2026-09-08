@@ -43,6 +43,21 @@ function Get-RailwayServerUrl {
   return ""
 }
 
+function Wait-ForHealth([string]$Url, [int]$Minutes = 12) {
+  $deadline = (Get-Date).AddMinutes($Minutes)
+  do {
+    try {
+      $health = Invoke-WebRequest -UseBasicParsing -Uri "$Url/health" -TimeoutSec 15
+      if ($health.StatusCode -eq 200 -and $health.Content.Trim() -eq "OK") {
+        return
+      }
+    } catch {}
+    Start-Sleep -Seconds 10
+  } while ((Get-Date) -lt $deadline)
+
+  throw "Servidor nao ficou saudavel dentro do limite. Consulte 'railway logs --service pimata-server'."
+}
+
 if (-not (Get-Command railway -ErrorAction SilentlyContinue)) {
   if (-not (Get-Command npm -ErrorAction SilentlyContinue)) {
     throw "Railway CLI e npm nao encontrados. Instale Node.js 22.12+ e execute novamente."
@@ -68,9 +83,11 @@ $originPostalCode = Require-EnvironmentVariable "MELHOR_ENVIO_ORIGIN_POSTAL_CODE
 
 $legacyUrl = [Environment]::GetEnvironmentVariable("PIMATA_LEGACY_SUPABASE_URL")
 $legacyKey = [Environment]::GetEnvironmentVariable("PIMATA_LEGACY_SUPABASE_ANON_KEY")
+$shouldImportLegacy = -not [string]::IsNullOrWhiteSpace($legacyUrl) -and -not [string]::IsNullOrWhiteSpace($legacyKey)
 
 $jwtSecret = New-RandomHex
 $cookieSecret = New-RandomHex
+$setupSecret = New-RandomHex
 
 Write-Host "Criando projeto Railway $ProjectName..."
 railway init --name $ProjectName
@@ -95,7 +112,8 @@ foreach ($service in @("pimata-server", "pimata-worker")) {
 
 railway environment edit --service-config pimata-server deploy.healthcheckPath "/health"
 railway environment edit --service-config pimata-server deploy.healthcheckTimeout "300"
-railway environment edit --service-config pimata-server deploy.startCommand '/bin/sh -c "npm run predeploy && npm run bootstrap && exec npm start"'
+railway environment edit --service-config pimata-server deploy.startCommand '/bin/sh -c "npm run predeploy && exec npm start"'
+railway environment edit --service-config pimata-worker deploy.startCommand '/bin/sh -c "exec npm start"'
 
 $serverVariables = @(
   "NODE_ENV=production",
@@ -104,6 +122,7 @@ $serverVariables = @(
   'REDIS_URL=${{Redis.REDIS_URL}}',
   "JWT_SECRET=$jwtSecret",
   "COOKIE_SECRET=$cookieSecret",
+  "PIMATA_SETUP_SECRET=$setupSecret",
   "STORE_CORS=$StorefrontUrl",
   'ADMIN_CORS=https://${{RAILWAY_PUBLIC_DOMAIN}}',
   "AUTH_CORS=$StorefrontUrl," + 'https://${{RAILWAY_PUBLIC_DOMAIN}}',
@@ -153,24 +172,32 @@ railway service redeploy --service pimata-server
 if ($LASTEXITCODE -ne 0) { throw "Falha ao redeployar pimata-server." }
 
 Write-Host "Aguardando servidor responder /health..."
-$deadline = (Get-Date).AddMinutes(12)
-$serverHealthy = $false
-do {
-  try {
-    $health = Invoke-WebRequest -UseBasicParsing -Uri "$serverUrl/health" -TimeoutSec 15
-    if ($health.StatusCode -eq 200 -and $health.Content.Trim() -eq "OK") {
-      $serverHealthy = $true
-      break
-    }
-  } catch {}
-  Start-Sleep -Seconds 10
-} while ((Get-Date) -lt $deadline)
+Wait-ForHealth -Url $serverUrl
 
-if (-not $serverHealthy) {
-  throw "Servidor nao ficou saudavel dentro do limite. Consulte 'railway logs --service pimata-server'."
+Write-Host "Executando setup idempotente pelo runtime compilado..."
+$setupHeaders = @{ "x-pimata-setup-secret" = $setupSecret }
+$setupBody = @{ import_legacy = $shouldImportLegacy } | ConvertTo-Json -Compress
+$setupResult = Invoke-RestMethod -Method Post -Uri "$serverUrl/pimata/setup" -Headers $setupHeaders -ContentType "application/json" -Body $setupBody -TimeoutSec 300
+if (-not $setupResult.ok -or $setupResult.bootstrap -ne "completed") {
+  throw "Setup PiMaTa nao confirmou conclusao."
+}
+if ($shouldImportLegacy -and $setupResult.legacy_import -ne "completed") {
+  throw "Importacao do Venda Unica legado nao confirmou conclusao."
 }
 
-Write-Host "Servidor saudavel. Configurando worker..."
+Write-Host "Removendo segredo temporario de setup e redeployando..."
+railway variable delete PIMATA_SETUP_SECRET --service pimata-server
+if ($LASTEXITCODE -ne 0) { throw "Falha ao remover PIMATA_SETUP_SECRET." }
+railway service redeploy --service pimata-server
+if ($LASTEXITCODE -ne 0) { throw "Falha ao redeployar pimata-server apos remover setup secret." }
+Wait-ForHealth -Url $serverUrl
+
+$remainingVariables = railway variable list --service pimata-server --kv 2>&1 | Out-String
+if ($remainingVariables -match '(?m)^PIMATA_SETUP_SECRET=') {
+  throw "PIMATA_SETUP_SECRET ainda esta definido apos o setup."
+}
+
+Write-Host "Servidor configurado e setup desativado. Configurando worker..."
 $workerVariables = @(
   "NODE_ENV=production",
   "PORT=9000",
