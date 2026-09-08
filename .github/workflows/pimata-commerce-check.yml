@@ -189,13 +189,13 @@ jobs:
           set -euo pipefail
           (
             cd .medusa/server
-            PIMATA_SETUP_SECRET= NODE_ENV=production MEDUSA_WORKER_MODE=server DISABLE_MEDUSA_ADMIN=false npm start
+            PORT=9001 PIMATA_SETUP_SECRET= NODE_ENV=production MEDUSA_WORKER_MODE=server DISABLE_MEDUSA_ADMIN=false npm start
           ) >/tmp/pimata-medusa-server.log 2>&1 &
           PID=$!
           trap 'kill "${PID}" 2>/dev/null || true' EXIT
           for attempt in $(seq 1 60); do
-            if curl -fsS http://127.0.0.1:9000/health | grep -q 'OK'; then
-              STATUS="$(curl -fsS http://127.0.0.1:9000/pimata/status)"
+            if curl -fsS http://127.0.0.1:9001/health | grep -q 'OK'; then
+              STATUS="$(curl -fsS http://127.0.0.1:9001/pimata/status)"
               echo "${STATUS}" | grep -q '"service":"pimata-commerce"'
               echo "${STATUS}" | grep -q '"isolation":"dedicated-postgresql-database"'
               echo "${STATUS}" | grep -q '"redis_configured":true'
@@ -203,14 +203,14 @@ jobs:
               echo "${STATUS}" | grep -q '"mercado_pago_webhook_signature_configured":true'
 
               SETUP_DISABLED_CODE="$(curl -sS -o /tmp/pimata-disabled-setup.json -w '%{http_code}' \
-                -X POST http://127.0.0.1:9000/pimata/setup \
+                -X POST http://127.0.0.1:9001/pimata/setup \
                 -H 'Content-Type: application/json' \
                 -H 'x-pimata-setup-secret: anything' \
                 --data '{"import_legacy":false}')"
               test "${SETUP_DISABLED_CODE}" = "404"
 
               INVALID_WEBHOOK_CODE="$(curl -sS -o /tmp/pimata-invalid-mp-webhook.json -w '%{http_code}' \
-                -X POST 'http://127.0.0.1:9000/hooks/payment/mercadopago_mercadopago?data.id=123456789&type=payment' \
+                -X POST 'http://127.0.0.1:9001/hooks/payment/mercadopago_mercadopago?data.id=123456789&type=payment' \
                 -H 'Content-Type: application/json' \
                 -H 'x-request-id: ci-invalid-request' \
                 -H 'x-signature: ts=1781009491,v1=0000000000000000000000000000000000000000000000000000000000000000' \
