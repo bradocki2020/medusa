@@ -62,15 +62,19 @@ export default async function bootstrapPiMaTa({ container }: ExecArgs) {
     filters: { name: "PiMaTa Online" },
   })
 
-  let salesChannel = existingChannels[0]
-  if (!salesChannel) {
+  let salesChannelId = existingChannels[0]?.id
+  if (!salesChannelId) {
     const { result } = await createSalesChannelsWorkflow(container).run({
       input: {
         salesChannelsData: [{ name: "PiMaTa Online" }],
       },
     })
-    salesChannel = result[0]
-    logger.info(`[PiMaTa] Canal criado: ${salesChannel.id}`)
+    const createdSalesChannel = result[0]
+    if (!createdSalesChannel?.id) {
+      throw new Error("Falha ao criar o canal de vendas PiMaTa Online.")
+    }
+    salesChannelId = createdSalesChannel.id
+    logger.info(`[PiMaTa] Canal criado: ${salesChannelId}`)
   }
 
   await updateStoreCurrencies(container).run({
@@ -121,10 +125,10 @@ export default async function bootstrapPiMaTa({ container }: ExecArgs) {
     filters: { name: "Estoque PiMaTa" },
   })
 
-  let stockLocation = existingLocations[0]
+  let stockLocationId = existingLocations[0]?.id
   let createdStockLocation = false
 
-  if (!stockLocation) {
+  if (!stockLocationId) {
     const { result } = await createStockLocationsWorkflow(container).run({
       input: {
         locations: [
@@ -140,15 +144,19 @@ export default async function bootstrapPiMaTa({ container }: ExecArgs) {
         ],
       },
     })
-    stockLocation = result[0]
+    const createdLocation = result[0]
+    if (!createdLocation?.id) {
+      throw new Error("Falha ao criar o local de estoque PiMaTa.")
+    }
+    stockLocationId = createdLocation.id
     createdStockLocation = true
-    logger.info(`[PiMaTa] Local de estoque criado: ${stockLocation.id}`)
+    logger.info(`[PiMaTa] Local de estoque criado: ${stockLocationId}`)
   }
 
   if (createdStockLocation) {
     await link.create({
       [Modules.STOCK_LOCATION]: {
-        stock_location_id: stockLocation.id,
+        stock_location_id: stockLocationId,
       },
       [Modules.FULFILLMENT]: {
         fulfillment_provider_id: "manual_manual",
@@ -157,8 +165,8 @@ export default async function bootstrapPiMaTa({ container }: ExecArgs) {
 
     await linkSalesChannelsToStockLocationWorkflow(container).run({
       input: {
-        id: stockLocation.id,
-        add: [salesChannel.id],
+        id: stockLocationId,
+        add: [salesChannelId],
       },
     })
   }
@@ -167,8 +175,8 @@ export default async function bootstrapPiMaTa({ container }: ExecArgs) {
     input: {
       selector: { id: store.id },
       update: {
-        default_sales_channel_id: salesChannel.id,
-        default_location_id: stockLocation.id,
+        default_sales_channel_id: salesChannelId,
+        default_location_id: stockLocationId,
       },
     },
   })
@@ -197,11 +205,11 @@ export default async function bootstrapPiMaTa({ container }: ExecArgs) {
     filters: { type: "publishable" },
   })
 
-  let publishableKey = existingKeys.find(
+  let publishableKeyId = existingKeys.find(
     (key) => key.title === "PiMaTa Storefront"
-  )
+  )?.id
 
-  if (!publishableKey) {
+  if (!publishableKeyId) {
     const { result } = await createApiKeysWorkflow(container).run({
       input: {
         api_keys: [
@@ -213,21 +221,25 @@ export default async function bootstrapPiMaTa({ container }: ExecArgs) {
         ],
       },
     })
-    publishableKey = result[0]
+    const createdKey = result[0]
+    if (!createdKey?.id) {
+      throw new Error("Falha ao criar a chave publicável da storefront PiMaTa.")
+    }
+    publishableKeyId = createdKey.id
 
     await linkSalesChannelsToApiKeyWorkflow(container).run({
       input: {
-        id: publishableKey.id,
-        add: [salesChannel.id],
+        id: publishableKeyId,
+        add: [salesChannelId],
       },
     })
 
-    logger.info(`[PiMaTa] Chave publicável criada: ${publishableKey.id}`)
+    logger.info(`[PiMaTa] Chave publicável criada: ${publishableKeyId}`)
   }
 
   logger.info("[PiMaTa] Bootstrap concluído com sucesso.")
   logger.info(`[PiMaTa] Store: ${store.id}`)
-  logger.info(`[PiMaTa] Sales channel: ${salesChannel.id}`)
-  logger.info(`[PiMaTa] Stock location: ${stockLocation.id}`)
-  logger.info(`[PiMaTa] Publishable API key id: ${publishableKey.id}`)
+  logger.info(`[PiMaTa] Sales channel: ${salesChannelId}`)
+  logger.info(`[PiMaTa] Stock location: ${stockLocationId}`)
+  logger.info(`[PiMaTa] Publishable API key id: ${publishableKeyId}`)
 }
