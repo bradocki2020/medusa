@@ -140,11 +140,13 @@ if ([string]::IsNullOrWhiteSpace($serverUrl)) {
 }
 
 Write-Host "Fixando URLs publicas do backend em $serverUrl..."
-railway variable set --service pimata-server \
-  "MEDUSA_BACKEND_URL=$serverUrl" \
-  "MERCADO_PAGO_BACKEND_URL=$serverUrl" \
-  "ADMIN_CORS=$serverUrl" \
+$publicUrlVariables = @(
+  "MEDUSA_BACKEND_URL=$serverUrl",
+  "MERCADO_PAGO_BACKEND_URL=$serverUrl",
+  "ADMIN_CORS=$serverUrl",
   "AUTH_CORS=$StorefrontUrl,$serverUrl"
+)
+railway variable set --service pimata-server @publicUrlVariables
 if ($LASTEXITCODE -ne 0) { throw "Falha ao fixar URLs do servidor." }
 
 railway service redeploy --service pimata-server
