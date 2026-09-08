@@ -58,6 +58,7 @@ jobs:
       MELHOR_ENVIO_SANDBOX: 'true'
       MELHOR_ENVIO_ORIGIN_POSTAL_CODE: '13800000'
       MELHOR_ENVIO_USER_AGENT: PiMaTa CI (contato@pimata.app)
+      PIMATA_SETUP_SECRET: ci-pimata-setup-secret
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -106,7 +107,6 @@ jobs:
           node - <<'NODE'
           const pkg = require('./package.json')
           if (!pkg.scripts?.predeploy) throw new Error('Built artifact is missing predeploy script')
-          if (!pkg.scripts?.bootstrap) throw new Error('Built artifact is missing bootstrap script')
           if (!pkg.scripts?.start) throw new Error('Built artifact is missing start script')
           NODE
       - name: Verify dedicated database starts empty
@@ -123,10 +123,10 @@ jobs:
           ME="$(PGPASSWORD=postgres psql -h 127.0.0.1 -U postgres -d pimata_medusa -Atc "select count(*) from fulfillment_provider where id='melhor-envio_melhor-envio';")"
           test "${MP}" -eq 1
           test "${ME}" -eq 1
-      - name: Bootstrap PiMaTa Brazil store
+      - name: Bootstrap PiMaTa Brazil store from source wrapper
         timeout-minutes: 5
         run: npm run bootstrap
-      - name: Verify bootstrap is idempotent
+      - name: Verify source bootstrap is idempotent
         timeout-minutes: 5
         run: npm run bootstrap
       - name: Verify PiMaTa commercial bootstrap records
@@ -146,20 +146,50 @@ jobs:
           test "${SETS}" -eq 1
           test "${PICKUP}" -eq 1
           test "${MEOPT}" -eq 1
-      - name: Verify built artifact deploy hooks are executable
-        timeout-minutes: 8
-        run: |
-          set -euo pipefail
-          cd .medusa/server
-          NODE_ENV=development npm run predeploy
-          NODE_ENV=development npm run bootstrap
-      - name: Start built Medusa artifact and verify health
+      - name: Verify compiled setup route is executable and idempotent
         timeout-minutes: 5
         run: |
           set -euo pipefail
           (
             cd .medusa/server
             NODE_ENV=production MEDUSA_WORKER_MODE=server DISABLE_MEDUSA_ADMIN=false npm start
+          ) >/tmp/pimata-medusa-setup.log 2>&1 &
+          PID=$!
+          trap 'kill "${PID}" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:9000/health | grep -q 'OK'; then
+              INVALID_CODE="$(curl -sS -o /tmp/pimata-invalid-setup.json -w '%{http_code}' \
+                -X POST http://127.0.0.1:9000/pimata/setup \
+                -H 'Content-Type: application/json' \
+                -H 'x-pimata-setup-secret: invalid' \
+                --data '{"import_legacy":false}')"
+              test "${INVALID_CODE}" = "401"
+
+              for run in 1 2; do
+                SETUP_CODE="$(curl -sS -o /tmp/pimata-setup-${run}.json -w '%{http_code}' \
+                  -X POST http://127.0.0.1:9000/pimata/setup \
+                  -H 'Content-Type: application/json' \
+                  -H "x-pimata-setup-secret: ${PIMATA_SETUP_SECRET}" \
+                  --data '{"import_legacy":false}')"
+                test "${SETUP_CODE}" = "200"
+                grep -q '"bootstrap":"completed"' /tmp/pimata-setup-${run}.json
+              done
+              kill "${PID}" 2>/dev/null || true
+              wait "${PID}" 2>/dev/null || true
+              trap - EXIT
+              exit 0
+            fi
+            sleep 2
+          done
+          cat /tmp/pimata-medusa-setup.log
+          exit 1
+      - name: Start built Medusa artifact and verify health
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          (
+            cd .medusa/server
+            PIMATA_SETUP_SECRET= NODE_ENV=production MEDUSA_WORKER_MODE=server DISABLE_MEDUSA_ADMIN=false npm start
           ) >/tmp/pimata-medusa-server.log 2>&1 &
           PID=$!
           trap 'kill "${PID}" 2>/dev/null || true' EXIT
@@ -171,6 +201,13 @@ jobs:
               echo "${STATUS}" | grep -q '"redis_configured":true'
               echo "${STATUS}" | grep -q '"worker_mode":"server"'
               echo "${STATUS}" | grep -q '"mercado_pago_webhook_signature_configured":true'
+
+              SETUP_DISABLED_CODE="$(curl -sS -o /tmp/pimata-disabled-setup.json -w '%{http_code}' \
+                -X POST http://127.0.0.1:9000/pimata/setup \
+                -H 'Content-Type: application/json' \
+                -H 'x-pimata-setup-secret: anything' \
+                --data '{"import_legacy":false}')"
+              test "${SETUP_DISABLED_CODE}" = "404"
 
               INVALID_WEBHOOK_CODE="$(curl -sS -o /tmp/pimata-invalid-mp-webhook.json -w '%{http_code}' \
                 -X POST 'http://127.0.0.1:9000/hooks/payment/mercadopago_mercadopago?data.id=123456789&type=payment' \
@@ -194,7 +231,7 @@ jobs:
           set -euo pipefail
           (
             cd .medusa/server
-            NODE_ENV=production MEDUSA_WORKER_MODE=worker DISABLE_MEDUSA_ADMIN=true npm start
+            PIMATA_SETUP_SECRET= NODE_ENV=production MEDUSA_WORKER_MODE=worker DISABLE_MEDUSA_ADMIN=true npm start
           ) >/tmp/pimata-medusa-worker.log 2>&1 &
           PID=$!
           trap 'kill "${PID}" 2>/dev/null || true' EXIT
