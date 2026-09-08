@@ -13,6 +13,10 @@ type LegacyProduct = {
   image_url?: string | null
   image2_url?: string | null
   image3_url?: string | null
+  weight_kg?: string | number | null
+  width_cm?: string | number | null
+  height_cm?: string | number | null
+  length_cm?: string | number | null
   published: boolean
   sold: boolean
   created_at?: string | null
@@ -20,6 +24,11 @@ type LegacyProduct = {
 
 const isHttpUrl = (value: unknown): value is string =>
   typeof value === "string" && /^https?:\/\//i.test(value)
+
+const positiveNumber = (value: unknown): number | undefined => {
+  const number = Number(value)
+  return Number.isFinite(number) && number > 0 ? number : undefined
+}
 
 export default async function importVendaUnica({ container }: ExecArgs) {
   const logger = container.resolve(ContainerRegistrationKeys.LOGGER)
@@ -34,12 +43,10 @@ export default async function importVendaUnica({ container }: ExecArgs) {
     )
   }
 
-  const url = new URL(
-    `${baseUrl.replace(/\/$/, "")}/rest/v1/venda_unica_products`
-  )
+  const url = new URL(`${baseUrl.replace(/\/$/, "")}/rest/v1/venda_unica_products`)
   url.searchParams.set(
     "select",
-    "id,slug,title,description,condition,price,sale_price,image_url,image2_url,image3_url,published,sold,created_at"
+    "id,slug,title,description,condition,price,sale_price,image_url,image2_url,image3_url,weight_kg,width_cm,height_cm,length_cm,published,sold,created_at"
   )
   url.searchParams.set("published", "eq.true")
   url.searchParams.set("sold", "eq.false")
@@ -88,9 +95,7 @@ export default async function importVendaUnica({ container }: ExecArgs) {
       continue
     }
 
-    const images = [row.image_url, row.image2_url, row.image3_url].filter(
-      isHttpUrl
-    )
+    const images = [row.image_url, row.image2_url, row.image3_url].filter(isHttpUrl)
 
     await createVendaUnicaWorkflow(container).run({
       input: {
@@ -107,6 +112,10 @@ export default async function importVendaUnica({ container }: ExecArgs) {
         source_id: row.id,
         condition: row.condition || undefined,
         requires_shipping: true,
+        weight_kg: positiveNumber(row.weight_kg),
+        width_cm: positiveNumber(row.width_cm),
+        height_cm: positiveNumber(row.height_cm),
+        length_cm: positiveNumber(row.length_cm),
       },
     })
 
@@ -114,7 +123,5 @@ export default async function importVendaUnica({ container }: ExecArgs) {
     logger.info(`Importado ${row.id}: ${row.title}`)
   }
 
-  logger.info(
-    `Importação concluída. Importados: ${imported}. Ignorados: ${skipped}.`
-  )
+  logger.info(`Importação concluída. Importados: ${imported}. Ignorados: ${skipped}.`)
 }

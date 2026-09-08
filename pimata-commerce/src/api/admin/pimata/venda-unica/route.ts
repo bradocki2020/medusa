@@ -16,6 +16,10 @@ const CreateVendaUnicaSchema = z.object({
   source_id: z.string().trim().min(1).max(250).optional(),
   condition: z.string().trim().max(100).optional(),
   requires_shipping: z.boolean().optional(),
+  weight_kg: z.coerce.number().positive().max(1000).optional(),
+  width_cm: z.coerce.number().positive().max(1000).optional(),
+  height_cm: z.coerce.number().positive().max(1000).optional(),
+  length_cm: z.coerce.number().positive().max(1000).optional(),
 })
 
 export const POST = async (
@@ -24,9 +28,7 @@ export const POST = async (
 ) => {
   const input = CreateVendaUnicaSchema.parse(req.body)
 
-  const { result } = await createVendaUnicaWorkflow(req.scope).run({
-    input,
-  })
+  const { result } = await createVendaUnicaWorkflow(req.scope).run({ input })
 
   res.status(201).json({
     product: result.products[0],

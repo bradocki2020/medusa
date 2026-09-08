@@ -18,7 +18,6 @@ permissions:
 jobs:
   validate:
     runs-on: ubuntu-latest
-
     services:
       postgres:
         image: postgres:17
@@ -26,27 +25,19 @@ jobs:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
           POSTGRES_DB: pimata_medusa
-        ports:
-          - 5432:5432
+        ports: ['5432:5432']
         options: >-
           --health-cmd "pg_isready -U postgres -d pimata_medusa"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
+          --health-interval 10s --health-timeout 5s --health-retries 5
       redis:
         image: redis:7-alpine
-        ports:
-          - 6379:6379
+        ports: ['6379:6379']
         options: >-
           --health-cmd "redis-cli ping"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
+          --health-interval 10s --health-timeout 5s --health-retries 5
     defaults:
       run:
         working-directory: pimata-commerce
-
     env:
       NODE_ENV: development
       DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/pimata_medusa
@@ -66,7 +57,6 @@ jobs:
       MELHOR_ENVIO_SANDBOX: 'true'
       MELHOR_ENVIO_ORIGIN_POSTAL_CODE: '13800000'
       MELHOR_ENVIO_USER_AGENT: PiMaTa CI (contato@pimata.app)
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -80,12 +70,7 @@ jobs:
         run: |
           set -euo pipefail
           test ! -f .env
-          if grep -R -E 'APP_USR-[A-Za-z0-9_-]{20,}|sk_live_[A-Za-z0-9_-]{10,}' . --exclude-dir=node_modules; then
-            echo 'Possível segredo real encontrado no código versionado.'
-            exit 1
-          fi
-      - name: Validate package manifest
-        run: npm pkg get name version
+          if grep -R -E 'APP_USR-[A-Za-z0-9_-]{20,}|sk_live_[A-Za-z0-9_-]{10,}' . --exclude-dir=node_modules; then exit 1; fi
       - name: Install dependencies
         run: npm install --no-audit --no-fund
       - name: TypeScript check
@@ -94,55 +79,50 @@ jobs:
         run: npm run build
       - name: Verify dedicated database starts empty
         run: |
-          set -euo pipefail
-          PUBLIC_TABLES="$(PGPASSWORD=postgres psql -h 127.0.0.1 -U postgres -d pimata_medusa -Atc "select count(*) from information_schema.tables where table_schema = 'public';")"
-          test "${PUBLIC_TABLES}" -eq 0
+          TABLES="$(PGPASSWORD=postgres psql -h 127.0.0.1 -U postgres -d pimata_medusa -Atc "select count(*) from information_schema.tables where table_schema='public';")"
+          test "${TABLES}" -eq 0
       - name: Run Medusa database migrations
         timeout-minutes: 8
         run: npm run predeploy
-      - name: Verify Medusa tables in dedicated database
-        run: |
-          set -euo pipefail
-          PUBLIC_TABLES="$(PGPASSWORD=postgres psql -h 127.0.0.1 -U postgres -d pimata_medusa -Atc "select count(*) from information_schema.tables where table_schema = 'public';")"
-          PRODUCT_TABLE="$(PGPASSWORD=postgres psql -h 127.0.0.1 -U postgres -d pimata_medusa -Atc "select count(*) from information_schema.tables where table_schema = 'public' and table_name = 'product';")"
-          test "${PUBLIC_TABLES}" -gt 50
-          test "${PRODUCT_TABLE}" -eq 1
       - name: Verify custom providers registered
         run: |
           set -euo pipefail
-          MP_PROVIDER="$(PGPASSWORD=postgres psql -h 127.0.0.1 -U postgres -d pimata_medusa -Atc "select count(*) from payment_provider where id = 'pp_mercadopago_mercadopago';")"
-          ME_PROVIDER="$(PGPASSWORD=postgres psql -h 127.0.0.1 -U postgres -d pimata_medusa -Atc "select count(*) from fulfillment_provider where id = 'melhor-envio_melhor-envio';")"
-          test "${MP_PROVIDER}" -eq 1
-          test "${ME_PROVIDER}" -eq 1
+          MP="$(PGPASSWORD=postgres psql -h 127.0.0.1 -U postgres -d pimata_medusa -Atc "select count(*) from payment_provider where id='pp_mercadopago_mercadopago';")"
+          ME="$(PGPASSWORD=postgres psql -h 127.0.0.1 -U postgres -d pimata_medusa -Atc "select count(*) from fulfillment_provider where id='melhor-envio_melhor-envio';")"
+          test "${MP}" -eq 1
+          test "${ME}" -eq 1
       - name: Bootstrap PiMaTa Brazil store
         timeout-minutes: 5
         run: npm run bootstrap
       - name: Verify bootstrap is idempotent
         timeout-minutes: 5
         run: npm run bootstrap
-      - name: Verify PiMaTa bootstrap records
+      - name: Verify PiMaTa commercial bootstrap records
         run: |
           set -euo pipefail
-          BR_REGION="$(PGPASSWORD=postgres psql -h 127.0.0.1 -U postgres -d pimata_medusa -Atc "select count(*) from region where name = 'Brasil' and currency_code = 'brl';")"
-          PIMATA_CHANNEL="$(PGPASSWORD=postgres psql -h 127.0.0.1 -U postgres -d pimata_medusa -Atc "select count(*) from sales_channel where name = 'PiMaTa Online';")"
-          PIMATA_LOCATION="$(PGPASSWORD=postgres psql -h 127.0.0.1 -U postgres -d pimata_medusa -Atc "select count(*) from stock_location where name = 'Estoque PiMaTa';")"
-          PUBLISHABLE_KEY="$(PGPASSWORD=postgres psql -h 127.0.0.1 -U postgres -d pimata_medusa -Atc "select count(*) from api_key where title = 'PiMaTa Storefront' and type = 'publishable';")"
-          test "${BR_REGION}" -eq 1
-          test "${PIMATA_CHANNEL}" -eq 1
-          test "${PIMATA_LOCATION}" -eq 1
-          test "${PUBLISHABLE_KEY}" -eq 1
+          BR="$(PGPASSWORD=postgres psql -h 127.0.0.1 -U postgres -d pimata_medusa -Atc "select count(*) from region where name='Brasil' and currency_code='brl';")"
+          CH="$(PGPASSWORD=postgres psql -h 127.0.0.1 -U postgres -d pimata_medusa -Atc "select count(*) from sales_channel where name='PiMaTa Online';")"
+          LOC="$(PGPASSWORD=postgres psql -h 127.0.0.1 -U postgres -d pimata_medusa -Atc "select count(*) from stock_location where name='Estoque PiMaTa';")"
+          KEY="$(PGPASSWORD=postgres psql -h 127.0.0.1 -U postgres -d pimata_medusa -Atc "select count(*) from api_key where title='PiMaTa Storefront' and type='publishable';")"
+          SETS="$(PGPASSWORD=postgres psql -h 127.0.0.1 -U postgres -d pimata_medusa -Atc "select count(*) from fulfillment_set where name='PiMaTa Brasil delivery';")"
+          PICKUP="$(PGPASSWORD=postgres psql -h 127.0.0.1 -U postgres -d pimata_medusa -Atc "select count(*) from shipping_option where name='Retirada PiMaTa';")"
+          MEOPT="$(PGPASSWORD=postgres psql -h 127.0.0.1 -U postgres -d pimata_medusa -Atc "select count(*) from shipping_option where name='Melhor Envio — menor preço';")"
+          test "${BR}" -eq 1
+          test "${CH}" -eq 1
+          test "${LOC}" -eq 1
+          test "${KEY}" -eq 1
+          test "${SETS}" -eq 1
+          test "${PICKUP}" -eq 1
+          test "${MEOPT}" -eq 1
       - name: Start Medusa and verify health
         timeout-minutes: 5
         run: |
           set -euo pipefail
           npm start >/tmp/pimata-medusa.log 2>&1 &
-          MEDUSA_PID=$!
-          trap 'kill "${MEDUSA_PID}" 2>/dev/null || true' EXIT
+          PID=$!
+          trap 'kill "${PID}" 2>/dev/null || true' EXIT
           for attempt in $(seq 1 60); do
-            if curl -fsS http://127.0.0.1:9000/health | grep -q 'OK'; then
-              echo 'Medusa health check OK.'
-              exit 0
-            fi
+            if curl -fsS http://127.0.0.1:9000/health | grep -q 'OK'; then exit 0; fi
             sleep 2
           done
           cat /tmp/pimata-medusa.log

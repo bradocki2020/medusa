@@ -12,11 +12,13 @@ import {
   createApiKeysWorkflow,
   createRegionsWorkflow,
   createSalesChannelsWorkflow,
+  createShippingOptionsWorkflow,
   createShippingProfilesWorkflow,
   createStockLocationsWorkflow,
   createTaxRegionsWorkflow,
   linkSalesChannelsToApiKeyWorkflow,
   linkSalesChannelsToStockLocationWorkflow,
+  updateRegionsWorkflow,
   updateStoresStep,
   updateStoresWorkflow,
 } from "@medusajs/medusa/core-flows"
@@ -36,7 +38,6 @@ const updateStoreCurrencies = createWorkflow(
         })),
       },
     }))
-
     const stores = updateStoresStep(normalized)
     return new WorkflowResponse(stores)
   }
@@ -49,12 +50,18 @@ export default async function bootstrapPiMaTa({ container }: ExecArgs) {
   const storeService = container.resolve(Modules.STORE)
   const fulfillmentService = container.resolve(Modules.FULFILLMENT)
 
+  const mercadoPagoEnabled = Boolean(process.env.MERCADO_PAGO_ACCESS_TOKEN)
+  const melhorEnvioEnabled = Boolean(
+    process.env.MELHOR_ENVIO_TOKEN && process.env.MELHOR_ENVIO_ORIGIN_POSTAL_CODE
+  )
+  const paymentProviders = mercadoPagoEnabled
+    ? ["pp_mercadopago_mercadopago"]
+    : ["pp_system_default"]
+
   logger.info("[PiMaTa] Iniciando bootstrap da loja brasileira...")
 
   const [store] = await storeService.listStores()
-  if (!store) {
-    throw new Error("Nenhuma store Medusa foi encontrada após as migrations.")
-  }
+  if (!store) throw new Error("Nenhuma store Medusa foi encontrada após as migrations.")
 
   const { data: existingChannels } = await query.graph({
     entity: "sales_channel",
@@ -65,15 +72,10 @@ export default async function bootstrapPiMaTa({ container }: ExecArgs) {
   let salesChannelId = existingChannels[0]?.id
   if (!salesChannelId) {
     const { result } = await createSalesChannelsWorkflow(container).run({
-      input: {
-        salesChannelsData: [{ name: "PiMaTa Online" }],
-      },
+      input: { salesChannelsData: [{ name: "PiMaTa Online" }] },
     })
-    const createdSalesChannel = result[0]
-    if (!createdSalesChannel?.id) {
-      throw new Error("Falha ao criar o canal de vendas PiMaTa Online.")
-    }
-    salesChannelId = createdSalesChannel.id
+    salesChannelId = result[0]?.id
+    if (!salesChannelId) throw new Error("Falha ao criar o canal de vendas PiMaTa Online.")
     logger.info(`[PiMaTa] Canal criado: ${salesChannelId}`)
   }
 
@@ -90,20 +92,30 @@ export default async function bootstrapPiMaTa({ container }: ExecArgs) {
     filters: { name: "Brasil" },
   })
 
-  if (!existingRegions.length) {
-    await createRegionsWorkflow(container).run({
+  let regionId = existingRegions[0]?.id
+  if (!regionId) {
+    const { result } = await createRegionsWorkflow(container).run({
       input: {
         regions: [
           {
             name: "Brasil",
             currency_code: "brl",
             countries: ["br"],
-            payment_providers: ["pp_system_default"],
+            payment_providers: paymentProviders,
           },
         ],
       },
     })
+    regionId = result[0]?.id
+    if (!regionId) throw new Error("Falha ao criar a região Brasil.")
     logger.info("[PiMaTa] Região Brasil/BRL criada.")
+  } else {
+    await updateRegionsWorkflow(container).run({
+      input: {
+        selector: { id: regionId },
+        update: { payment_providers: paymentProviders },
+      },
+    })
   }
 
   const { data: existingTaxRegions } = await query.graph({
@@ -111,23 +123,20 @@ export default async function bootstrapPiMaTa({ container }: ExecArgs) {
     fields: ["id", "country_code"],
     filters: { country_code: "br" },
   })
-
   if (!existingTaxRegions.length) {
     await createTaxRegionsWorkflow(container).run({
       input: [{ country_code: "br", provider_id: "tp_system" }],
     })
-    logger.info("[PiMaTa] Região fiscal BR criada.")
   }
 
   const { data: existingLocations } = await query.graph({
     entity: "stock_location",
-    fields: ["id", "name"],
+    fields: ["id", "name", "fulfillment_providers.id", "fulfillment_sets.id"],
     filters: { name: "Estoque PiMaTa" },
   })
 
   let stockLocationId = existingLocations[0]?.id
-  let createdStockLocation = false
-
+  let locationRecord: any = existingLocations[0]
   if (!stockLocationId) {
     const { result } = await createStockLocationsWorkflow(container).run({
       input: {
@@ -144,31 +153,24 @@ export default async function bootstrapPiMaTa({ container }: ExecArgs) {
         ],
       },
     })
-    const createdLocation = result[0]
-    if (!createdLocation?.id) {
-      throw new Error("Falha ao criar o local de estoque PiMaTa.")
-    }
-    stockLocationId = createdLocation.id
-    createdStockLocation = true
-    logger.info(`[PiMaTa] Local de estoque criado: ${stockLocationId}`)
+    stockLocationId = result[0]?.id
+    if (!stockLocationId) throw new Error("Falha ao criar o local de estoque PiMaTa.")
+    locationRecord = { id: stockLocationId, fulfillment_providers: [], fulfillment_sets: [] }
   }
 
-  if (createdStockLocation) {
-    await link.create({
-      [Modules.STOCK_LOCATION]: {
-        stock_location_id: stockLocationId,
-      },
-      [Modules.FULFILLMENT]: {
-        fulfillment_provider_id: "manual_manual",
-      },
-    })
-
-    await linkSalesChannelsToStockLocationWorkflow(container).run({
-      input: {
-        id: stockLocationId,
-        add: [salesChannelId],
-      },
-    })
+  const linkedProviderIds = new Set(
+    (locationRecord?.fulfillment_providers || []).map((provider: any) => provider.id)
+  )
+  for (const providerId of [
+    "manual_manual",
+    ...(melhorEnvioEnabled ? ["melhor-envio_melhor-envio"] : []),
+  ]) {
+    if (!linkedProviderIds.has(providerId)) {
+      await link.create({
+        [Modules.STOCK_LOCATION]: { stock_location_id: stockLocationId },
+        [Modules.FULFILLMENT]: { fulfillment_provider_id: providerId },
+      })
+    }
   }
 
   await updateStoresWorkflow(container).run({
@@ -181,65 +183,135 @@ export default async function bootstrapPiMaTa({ container }: ExecArgs) {
     },
   })
 
-  const shippingProfiles = await fulfillmentService.listShippingProfiles({
-    type: "default",
+  const shippingProfiles = await fulfillmentService.listShippingProfiles({ type: "default" })
+  let shippingProfile = shippingProfiles[0]
+  if (!shippingProfile) {
+    const { result } = await createShippingProfilesWorkflow(container).run({
+      input: { data: [{ name: "Produtos físicos PiMaTa", type: "default" }] },
+    })
+    shippingProfile = result[0]
+  }
+  if (!shippingProfile?.id) throw new Error("Falha ao obter o perfil de envio PiMaTa.")
+
+  const { data: existingSets } = await query.graph({
+    entity: "fulfillment_set",
+    fields: ["id", "name", "service_zones.id", "service_zones.name"],
+    filters: { name: "PiMaTa Brasil delivery" },
   })
 
-  if (!shippingProfiles.length) {
-    await createShippingProfilesWorkflow(container).run({
-      input: {
-        data: [
-          {
-            name: "Produtos físicos PiMaTa",
-            type: "default",
-          },
-        ],
-      },
+  let fulfillmentSet: any = existingSets[0]
+  if (!fulfillmentSet) {
+    fulfillmentSet = await fulfillmentService.createFulfillmentSets({
+      name: "PiMaTa Brasil delivery",
+      type: "shipping",
+      service_zones: [
+        {
+          name: "Brasil",
+          geo_zones: [{ country_code: "br", type: "country" }],
+        },
+      ],
     })
-    logger.info("[PiMaTa] Perfil padrão de envio criado.")
   }
+  const serviceZoneId = fulfillmentSet?.service_zones?.[0]?.id
+  if (!fulfillmentSet?.id || !serviceZoneId) {
+    throw new Error("Falha ao configurar a zona de entrega Brasil.")
+  }
+
+  const linkedSetIds = new Set(
+    (locationRecord?.fulfillment_sets || []).map((set: any) => set.id)
+  )
+  if (!linkedSetIds.has(fulfillmentSet.id)) {
+    await link.create({
+      [Modules.STOCK_LOCATION]: { stock_location_id: stockLocationId },
+      [Modules.FULFILLMENT]: { fulfillment_set_id: fulfillmentSet.id },
+    })
+  }
+
+  const { data: existingOptions } = await query.graph({
+    entity: "shipping_option",
+    fields: ["id", "name", "provider_id", "service_zone_id"],
+  })
+  const optionNames = new Set(existingOptions.map((option: any) => option.name))
+  const options: any[] = []
+
+  if (!optionNames.has("Retirada PiMaTa")) {
+    options.push({
+      name: "Retirada PiMaTa",
+      price_type: "flat",
+      provider_id: "manual_manual",
+      service_zone_id: serviceZoneId,
+      shipping_profile_id: shippingProfile.id,
+      type: {
+        label: "Retirada grátis",
+        description: "Retirada no local após confirmação do pagamento.",
+        code: "pimata-pickup",
+      },
+      prices: [{ region_id: regionId, amount: 0 }],
+      rules: [
+        { attribute: "enabled_in_store", value: "true", operator: "eq" },
+        { attribute: "is_return", value: "false", operator: "eq" },
+      ],
+    })
+  }
+
+  if (melhorEnvioEnabled && !optionNames.has("Melhor Envio — menor preço")) {
+    options.push({
+      name: "Melhor Envio — menor preço",
+      price_type: "calculated",
+      provider_id: "melhor-envio_melhor-envio",
+      service_zone_id: serviceZoneId,
+      shipping_profile_id: shippingProfile.id,
+      data: {
+        id: "melhor-envio-cheapest",
+        name: "Melhor Envio — menor preço",
+      },
+      type: {
+        label: "Melhor Envio",
+        description: "Frete calculado pelo CEP de destino.",
+        code: "pimata-melhor-envio",
+      },
+      rules: [
+        { attribute: "enabled_in_store", value: "true", operator: "eq" },
+        { attribute: "is_return", value: "false", operator: "eq" },
+      ],
+    })
+  }
+
+  if (options.length) {
+    await createShippingOptionsWorkflow(container).run({ input: options })
+  }
+
+  await linkSalesChannelsToStockLocationWorkflow(container).run({
+    input: { id: stockLocationId, add: [salesChannelId] },
+  })
 
   const { data: existingKeys } = await query.graph({
     entity: "api_key",
     fields: ["id", "title", "type"],
     filters: { type: "publishable" },
   })
-
   let publishableKeyId = existingKeys.find(
     (key) => key.title === "PiMaTa Storefront"
   )?.id
-
   if (!publishableKeyId) {
     const { result } = await createApiKeysWorkflow(container).run({
       input: {
-        api_keys: [
-          {
-            title: "PiMaTa Storefront",
-            type: "publishable",
-            created_by: "",
-          },
-        ],
+        api_keys: [{ title: "PiMaTa Storefront", type: "publishable", created_by: "" }],
       },
     })
-    const createdKey = result[0]
-    if (!createdKey?.id) {
-      throw new Error("Falha ao criar a chave publicável da storefront PiMaTa.")
-    }
-    publishableKeyId = createdKey.id
-
-    await linkSalesChannelsToApiKeyWorkflow(container).run({
-      input: {
-        id: publishableKeyId,
-        add: [salesChannelId],
-      },
-    })
-
-    logger.info(`[PiMaTa] Chave publicável criada: ${publishableKeyId}`)
+    publishableKeyId = result[0]?.id
+    if (!publishableKeyId) throw new Error("Falha ao criar a chave publicável PiMaTa.")
   }
+  await linkSalesChannelsToApiKeyWorkflow(container).run({
+    input: { id: publishableKeyId, add: [salesChannelId] },
+  })
 
   logger.info("[PiMaTa] Bootstrap concluído com sucesso.")
   logger.info(`[PiMaTa] Store: ${store.id}`)
+  logger.info(`[PiMaTa] Região Brasil: ${regionId}`)
   logger.info(`[PiMaTa] Sales channel: ${salesChannelId}`)
   logger.info(`[PiMaTa] Stock location: ${stockLocationId}`)
   logger.info(`[PiMaTa] Publishable API key id: ${publishableKeyId}`)
+  logger.info(`[PiMaTa] Mercado Pago: ${mercadoPagoEnabled ? "habilitado" : "não configurado"}`)
+  logger.info(`[PiMaTa] Melhor Envio: ${melhorEnvioEnabled ? "habilitado" : "não configurado"}`)
 }

@@ -21,6 +21,10 @@ export type CreateVendaUnicaInput = {
   source_id?: string
   condition?: string
   requires_shipping?: boolean
+  weight_kg?: number
+  width_cm?: number
+  height_cm?: number
+  length_cm?: number
 }
 
 export const createVendaUnicaWorkflow = createWorkflow(
@@ -98,15 +102,28 @@ export const createVendaUnicaWorkflow = createWorkflow(
           pimata_single_stock: true,
         }
 
-        if (data.input.source_id) {
-          metadata.pimata_source_id = data.input.source_id
-        }
-        if (data.input.condition) {
-          metadata.pimata_condition = data.input.condition
-        }
+        if (data.input.source_id) metadata.pimata_source_id = data.input.source_id
+        if (data.input.condition) metadata.pimata_condition = data.input.condition
         if (typeof data.input.compare_at_price === "number") {
           metadata.pimata_compare_at_price = data.input.compare_at_price
         }
+
+        const weight =
+          typeof data.input.weight_kg === "number" && data.input.weight_kg > 0
+            ? Math.round(data.input.weight_kg * 1000)
+            : undefined
+        const width =
+          typeof data.input.width_cm === "number" && data.input.width_cm > 0
+            ? data.input.width_cm
+            : undefined
+        const height =
+          typeof data.input.height_cm === "number" && data.input.height_cm > 0
+            ? data.input.height_cm
+            : undefined
+        const length =
+          typeof data.input.length_cm === "number" && data.input.length_cm > 0
+            ? data.input.length_cm
+            : undefined
 
         const product: CreateProductWorkflowInputDTO = {
           title: data.input.title,
@@ -118,6 +135,10 @@ export const createVendaUnicaWorkflow = createWorkflow(
           shipping_profile_id: shippingProfile.id,
           sales_channels: [{ id: store.default_sales_channel_id }],
           metadata,
+          weight,
+          width,
+          height,
+          length,
           options: [
             {
               title: "Peça",
@@ -130,6 +151,11 @@ export const createVendaUnicaWorkflow = createWorkflow(
               sku: data.inventoryItems[0].sku,
               manage_inventory: true,
               allow_backorder: false,
+              requires_shipping: data.input.requires_shipping !== false,
+              weight,
+              width,
+              height,
+              length,
               options: {
                 Peça: "Única",
               },
