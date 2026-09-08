@@ -151,7 +151,6 @@ export const createVendaUnicaWorkflow = createWorkflow(
               sku: data.inventoryItems[0].sku,
               manage_inventory: true,
               allow_backorder: false,
-              requires_shipping: data.input.requires_shipping !== false,
               weight,
               width,
               height,
