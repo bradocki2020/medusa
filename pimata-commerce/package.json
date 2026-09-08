@@ -9,6 +9,7 @@
     "dev": "medusa develop",
     "typecheck": "tsc --noEmit",
     "predeploy": "medusa db:migrate",
+    "bootstrap": "medusa exec ./src/scripts/bootstrap-pimata.ts",
     "import:legacy": "medusa exec ./src/scripts/import-venda-unica.ts"
   },
   "dependencies": {
