@@ -1,4 +1,4 @@
-name: PiMaTa Commerce Lock Repair
+name: PiMaTa Commerce Check
 
 on:
   push:
@@ -6,18 +6,57 @@ on:
     paths:
       - 'pimata-commerce/**'
       - '.github/workflows/pimata-commerce-check.yml'
+  pull_request:
+    paths:
+      - 'pimata-commerce/**'
+      - '.github/workflows/pimata-commerce-check.yml'
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  repair-lock:
-    if: github.actor != 'github-actions[bot]'
+  validate:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: pimata_medusa
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres -d pimata_medusa"
+          --health-interval 10s --health-timeout 5s --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s --health-timeout 5s --health-retries 5
     defaults:
       run:
         working-directory: pimata-commerce
+    env:
+      NODE_ENV: development
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/pimata_medusa
+      REDIS_URL: redis://127.0.0.1:6379
+      STORE_CORS: http://localhost:8000
+      ADMIN_CORS: http://localhost:9000
+      AUTH_CORS: http://localhost:8000,http://localhost:9000
+      JWT_SECRET: ci-jwt-secret-not-production
+      COOKIE_SECRET: ci-cookie-secret-not-production
+      MEDUSA_WORKER_MODE: shared
+      DISABLE_MEDUSA_ADMIN: 'false'
+      MEDUSA_BACKEND_URL: http://localhost:9000
+      MERCADO_PAGO_ACCESS_TOKEN: TEST-CI-MERCADO-PAGO-TOKEN
+      MERCADO_PAGO_BACKEND_URL: https://backend-ci.example.com
+      MERCADO_PAGO_STOREFRONT_URL: https://store-ci.example.com
+      MELHOR_ENVIO_TOKEN: TEST-CI-MELHOR-ENVIO-TOKEN
+      MELHOR_ENVIO_SANDBOX: 'true'
+      MELHOR_ENVIO_ORIGIN_POSTAL_CODE: '13800000'
+      MELHOR_ENVIO_USER_AGENT: PiMaTa CI (contato@pimata.app)
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -27,21 +66,82 @@ jobs:
           node-version: '22.12.0'
           cache: npm
           cache-dependency-path: pimata-commerce/package-lock.json
-      - name: Repair npm lockfile
+      - name: Verify no committed local secrets
         run: |
           set -euo pipefail
-          npm install --no-audit --no-fund
-          npm install --no-audit --no-fund
-          npm ci --dry-run --no-audit --no-fund
-      - name: Commit verified lockfile
+          test ! -f .env
+          if grep -R -E 'APP_USR-[A-Za-z0-9_-]{20,}|sk_live_[A-Za-z0-9_-]{10,}' . --exclude-dir=node_modules; then exit 1; fi
+      - name: Install locked dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Verify dependency manifests stay clean
+        run: git diff --exit-code -- package.json package-lock.json
+      - name: TypeScript check
+        run: npm run typecheck
+      - name: Build Medusa production artifact
+        run: npm run build
+      - name: Verify production bundle lock and install
         run: |
           set -euo pipefail
-          if git diff --quiet -- package-lock.json; then
-            echo 'package-lock.json already accepted by npm ci and unchanged.'
-            exit 0
-          fi
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add package-lock.json
-          git commit -m 'chore(pimata): repair npm lockfile for npm ci'
-          git push origin HEAD:pimata-commerce
+          test -f .medusa/server/package.json
+          test -f .medusa/server/package-lock.json
+          cd .medusa/server
+          npm ci --omit=dev --no-audit --no-fund
+      - name: Verify dedicated database starts empty
+        run: |
+          TABLES="$(PGPASSWORD=postgres psql -h 127.0.0.1 -U postgres -d pimata_medusa -Atc "select count(*) from information_schema.tables where table_schema='public';")"
+          test "${TABLES}" -eq 0
+      - name: Run Medusa database migrations
+        timeout-minutes: 8
+        run: npm run predeploy
+      - name: Verify custom providers registered
+        run: |
+          set -euo pipefail
+          MP="$(PGPASSWORD=postgres psql -h 127.0.0.1 -U postgres -d pimata_medusa -Atc "select count(*) from payment_provider where id='pp_mercadopago_mercadopago';")"
+          ME="$(PGPASSWORD=postgres psql -h 127.0.0.1 -U postgres -d pimata_medusa -Atc "select count(*) from fulfillment_provider where id='melhor-envio_melhor-envio';")"
+          test "${MP}" -eq 1
+          test "${ME}" -eq 1
+      - name: Bootstrap PiMaTa Brazil store
+        timeout-minutes: 5
+        run: npm run bootstrap
+      - name: Verify bootstrap is idempotent
+        timeout-minutes: 5
+        run: npm run bootstrap
+      - name: Verify PiMaTa commercial bootstrap records
+        run: |
+          set -euo pipefail
+          BR="$(PGPASSWORD=postgres psql -h 127.0.0.1 -U postgres -d pimata_medusa -Atc "select count(*) from region where name='Brasil' and currency_code='brl';")"
+          CH="$(PGPASSWORD=postgres psql -h 127.0.0.1 -U postgres -d pimata_medusa -Atc "select count(*) from sales_channel where name='PiMaTa Online';")"
+          LOC="$(PGPASSWORD=postgres psql -h 127.0.0.1 -U postgres -d pimata_medusa -Atc "select count(*) from stock_location where name='Estoque PiMaTa';")"
+          KEY="$(PGPASSWORD=postgres psql -h 127.0.0.1 -U postgres -d pimata_medusa -Atc "select count(*) from api_key where title='PiMaTa Storefront' and type='publishable';")"
+          SETS="$(PGPASSWORD=postgres psql -h 127.0.0.1 -U postgres -d pimata_medusa -Atc "select count(*) from fulfillment_set where name='PiMaTa Brasil delivery';")"
+          PICKUP="$(PGPASSWORD=postgres psql -h 127.0.0.1 -U postgres -d pimata_medusa -Atc "select count(*) from shipping_option where name='Retirada PiMaTa';")"
+          MEOPT="$(PGPASSWORD=postgres psql -h 127.0.0.1 -U postgres -d pimata_medusa -Atc "select count(*) from shipping_option where name='Melhor Envio — menor preço';")"
+          test "${BR}" -eq 1
+          test "${CH}" -eq 1
+          test "${LOC}" -eq 1
+          test "${KEY}" -eq 1
+          test "${SETS}" -eq 1
+          test "${PICKUP}" -eq 1
+          test "${MEOPT}" -eq 1
+      - name: Start built Medusa artifact and verify health
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          (
+            cd .medusa/server
+            NODE_ENV=production npm start
+          ) >/tmp/pimata-medusa.log 2>&1 &
+          PID=$!
+          trap 'kill "${PID}" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:9000/health | grep -q 'OK'; then
+              STATUS="$(curl -fsS http://127.0.0.1:9000/pimata/status)"
+              echo "${STATUS}" | grep -q '"service":"pimata-commerce"'
+              echo "${STATUS}" | grep -q '"isolation":"dedicated-postgresql-database"'
+              echo "${STATUS}" | grep -q '"redis_configured":true'
+              exit 0
+            fi
+            sleep 2
+          done
+          cat /tmp/pimata-medusa.log
+          exit 1
