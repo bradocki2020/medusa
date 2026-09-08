@@ -100,7 +100,7 @@ DATABASE_URL=postgresql://usuario:senha@host:5432/pimata_medusa
 
 Não aponte `DATABASE_URL` para o banco PostgreSQL atualmente usado pelo Venda Única/PiMaTa.
 
-Durante a validação do Medusa 2.20.1, o uso de `databaseSchema=medusa` mostrou comportamento inconsistente: `medusa db:migrate` criava tabelas no schema `public`, enquanto o runtime tentava consultá-las no schema customizado. Para eliminar esse risco, a arquitetura PiMaTa usa isolamento por **banco/projeto**, não por schema.
+O projeto não usa `databaseSchema` customizado. A separação é feita por banco/projeto PostgreSQL dedicado, evitando comportamento inconsistente observado no Medusa v2 entre migrations e runtime com schemas customizados.
 
 Isso mantém o banco legado completamente separado e permite criar, migrar, restaurar ou remover o Medusa sem interferir nas tabelas existentes.
 
