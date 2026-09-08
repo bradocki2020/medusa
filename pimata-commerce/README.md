@@ -67,15 +67,19 @@ O importador:
 4. cria o produto com estoque inicial 1;
 5. não importa novamente um produto cujo `handle` já exista.
 
-## Banco de dados
+## Banco de dados — isolamento obrigatório
 
-O Medusa usa:
+O Medusa deve usar um **banco PostgreSQL dedicado**.
 
 ```env
-DATABASE_SCHEMA=medusa
+DATABASE_URL=postgresql://usuario:senha@host:5432/pimata_medusa
 ```
 
-Isso permite manter as tabelas do Medusa separadas das tabelas legadas caso o PostgreSQL seja compartilhado. Para produção, a preferência é um banco dedicado ou, no mínimo, credenciais e schema exclusivos.
+Não aponte `DATABASE_URL` para o banco PostgreSQL atualmente usado pelo Venda Única/PiMaTa.
+
+Durante a validação do Medusa 2.20.1, o uso de `databaseSchema=medusa` mostrou comportamento inconsistente: `medusa db:migrate` criava tabelas no schema `public`, enquanto o runtime tentava consultá-las no schema customizado. Para eliminar esse risco, a arquitetura PiMaTa usa isolamento por **banco/projeto**, não por schema.
+
+Isso mantém o banco legado completamente separado e permite criar, migrar, restaurar ou remover o Medusa sem interferir nas tabelas existentes.
 
 ## Redis e processos de produção
 
@@ -92,13 +96,32 @@ Em produção devem existir duas instâncias do mesmo backend:
 
 Ambas usam o mesmo `DATABASE_URL` e `REDIS_URL`.
 
+A configuração usa Redis para cache, event bus, workflow engine e locking, com namespaces/prefixos próprios da PiMaTa onde aplicável.
+
+## Container
+
+`Dockerfile` gera uma imagem de produção baseada em Node 22.12.0. A mesma imagem pode ser usada para servidor e worker, mudando apenas as variáveis de ambiente.
+
 ## Segurança
 
 `JWT_SECRET` e `COOKIE_SECRET` nunca devem ser versionados. O `medusa-config.ts` bloqueia a inicialização em produção se eles, `DATABASE_URL` ou `REDIS_URL` estiverem ausentes.
 
 O arquivo `.env.template` contém somente placeholders.
 
-## Verificação
+## Verificação automatizada
+
+O workflow `PiMaTa Commerce Check` valida:
+
+1. ausência de segredos versionados;
+2. instalação das dependências;
+3. TypeScript;
+4. `medusa build`;
+5. PostgreSQL 17 dedicado e inicialmente vazio;
+6. `medusa db:migrate`;
+7. criação das tabelas principais do Medusa;
+8. Redis 7;
+9. inicialização real do backend;
+10. `GET /health` respondendo `OK`.
 
 Depois de iniciar o backend:
 
@@ -109,11 +132,12 @@ Depois de iniciar o backend:
 ## Plano de corte sem downtime
 
 1. manter `venda.pimata.app` atual em produção;
-2. subir Medusa em um hostname separado;
-3. criar estoque/local, canal de vendas, região BRL e perfil de envio no Admin;
-4. importar os anúncios ativos com `npm run import:legacy`;
-5. validar catálogo, estoque, checkout, pagamento e frete;
-6. conectar uma storefront nova ao Store API do Medusa;
-7. somente após os testes, trocar a home de `venda.pimata.app` para a nova storefront.
+2. provisionar PostgreSQL dedicado e Redis;
+3. subir Medusa em um hostname separado;
+4. criar estoque/local, canal de vendas, região BRL e perfil de envio no Admin;
+5. importar os anúncios ativos com `npm run import:legacy`;
+6. validar catálogo, estoque, checkout, pagamento e frete;
+7. conectar uma storefront nova ao Store API do Medusa;
+8. somente após os testes, trocar a home de `venda.pimata.app` para a nova storefront.
 
-O domínio atual não deve ser apontado para o Medusa antes da etapa 7.
+O domínio atual não deve ser apontado para o Medusa antes da etapa 8.
