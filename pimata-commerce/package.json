@@ -9,6 +9,7 @@
     "dev": "medusa develop",
     "typecheck": "tsc --noEmit",
     "test:webhook-signature": "ts-node ./src/scripts/test-mercado-pago-webhook-signature.ts",
+    "smoke:production": "node ./scripts/smoke-production.mjs",
     "predeploy": "medusa db:migrate",
     "bootstrap": "medusa exec ./src/scripts/bootstrap-pimata.ts",
     "import:legacy": "medusa exec ./src/scripts/import-venda-unica.ts"
