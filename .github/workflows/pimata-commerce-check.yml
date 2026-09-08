@@ -18,14 +18,41 @@ permissions:
 jobs:
   validate:
     runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: pimata_medusa
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d pimata_medusa"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
     defaults:
       run:
         working-directory: pimata-commerce
+
     env:
       NODE_ENV: development
-      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/pimata_medusa
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/pimata_medusa
       DATABASE_SCHEMA: medusa
-      REDIS_URL: redis://localhost:6379
+      REDIS_URL: redis://127.0.0.1:6379
       STORE_CORS: http://localhost:8000
       ADMIN_CORS: http://localhost:9000
       AUTH_CORS: http://localhost:8000,http://localhost:9000
@@ -66,3 +93,46 @@ jobs:
 
       - name: Build Medusa production artifact
         run: npm run build
+
+      - name: Prepare isolated Medusa schema
+        run: |
+          PGPASSWORD=postgres psql \
+            -h 127.0.0.1 \
+            -U postgres \
+            -d pimata_medusa \
+            -v ON_ERROR_STOP=1 \
+            -c 'create schema if not exists medusa;'
+
+      - name: Run Medusa database migrations
+        timeout-minutes: 8
+        run: npm run predeploy
+
+      - name: Verify tables are isolated in medusa schema
+        run: |
+          set -euo pipefail
+          MEDUSA_TABLES="$(PGPASSWORD=postgres psql -h 127.0.0.1 -U postgres -d pimata_medusa -Atc "select count(*) from information_schema.tables where table_schema = 'medusa';")"
+          PUBLIC_TABLES="$(PGPASSWORD=postgres psql -h 127.0.0.1 -U postgres -d pimata_medusa -Atc "select count(*) from information_schema.tables where table_schema = 'public';")"
+          echo "medusa tables: ${MEDUSA_TABLES}"
+          echo "public tables: ${PUBLIC_TABLES}"
+          test "${MEDUSA_TABLES}" -gt 0
+          test "${PUBLIC_TABLES}" -eq 0
+
+      - name: Start Medusa and verify health
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          npm start >/tmp/pimata-medusa.log 2>&1 &
+          MEDUSA_PID=$!
+          trap 'kill "${MEDUSA_PID}" 2>/dev/null || true' EXIT
+
+          for attempt in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:9000/health | grep -q 'OK'; then
+              echo 'Medusa health check OK.'
+              exit 0
+            fi
+            sleep 2
+          done
+
+          echo 'Medusa did not become healthy.'
+          cat /tmp/pimata-medusa.log
+          exit 1
