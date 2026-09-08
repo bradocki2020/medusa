@@ -11,8 +11,11 @@ type LegacyProduct = {
   price: string | number
   sale_price?: string | number | null
   image_url?: string | null
+  image_data_uri?: string | null
   image2_url?: string | null
+  image2_data_uri?: string | null
   image3_url?: string | null
+  image3_data_uri?: string | null
   weight_kg?: string | number | null
   width_cm?: string | number | null
   height_cm?: string | number | null
@@ -24,6 +27,9 @@ type LegacyProduct = {
 
 const isHttpUrl = (value: unknown): value is string =>
   typeof value === "string" && /^https?:\/\//i.test(value)
+
+const isImageDataUri = (value: unknown): value is string =>
+  typeof value === "string" && /^data:image\/[a-z0-9.+-]+;base64,/i.test(value)
 
 const positiveNumber = (value: unknown): number | undefined => {
   const number = Number(value)
@@ -43,10 +49,12 @@ export default async function importVendaUnica({ container }: ExecArgs) {
     )
   }
 
-  const url = new URL(`${baseUrl.replace(/\/$/, "")}/rest/v1/venda_unica_products`)
+  const normalizedBaseUrl = baseUrl.replace(/\/$/, "")
+  const imageEndpoint = `${normalizedBaseUrl}/functions/v1/venda-unica-image`
+  const url = new URL(`${normalizedBaseUrl}/rest/v1/venda_unica_products`)
   url.searchParams.set(
     "select",
-    "id,slug,title,description,condition,price,sale_price,image_url,image2_url,image3_url,weight_kg,width_cm,height_cm,length_cm,published,sold,created_at"
+    "id,slug,title,description,condition,price,sale_price,image_url,image_data_uri,image2_url,image2_data_uri,image3_url,image3_data_uri,weight_kg,width_cm,height_cm,length_cm,published,sold,created_at"
   )
   url.searchParams.set("published", "eq.true")
   url.searchParams.set("sold", "eq.false")
@@ -95,7 +103,21 @@ export default async function importVendaUnica({ container }: ExecArgs) {
       continue
     }
 
-    const images = [row.image_url, row.image2_url, row.image3_url].filter(isHttpUrl)
+    const imageSlots = [
+      { slot: 1, url: row.image_url, dataUri: row.image_data_uri },
+      { slot: 2, url: row.image2_url, dataUri: row.image2_data_uri },
+      { slot: 3, url: row.image3_url, dataUri: row.image3_data_uri },
+    ]
+
+    const images = imageSlots.flatMap(({ slot, url, dataUri }) => {
+      if (isHttpUrl(url)) return [url]
+      if (isImageDataUri(dataUri)) {
+        return [
+          `${imageEndpoint}?id=${encodeURIComponent(row.id)}&slot=${slot}`,
+        ]
+      }
+      return []
+    })
 
     await createVendaUnicaWorkflow(container).run({
       input: {
@@ -120,7 +142,9 @@ export default async function importVendaUnica({ container }: ExecArgs) {
     })
 
     imported++
-    logger.info(`Importado ${row.id}: ${row.title}`)
+    logger.info(
+      `Importado ${row.id}: ${row.title} (${images.length} imagem(ns)).`
+    )
   }
 
   logger.info(`Importação concluída. Importados: ${imported}. Ignorados: ${skipped}.`)
