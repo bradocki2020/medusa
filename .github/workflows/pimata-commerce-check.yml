@@ -51,7 +51,6 @@ jobs:
     env:
       NODE_ENV: development
       DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/pimata_medusa
-      DATABASE_SCHEMA: medusa
       REDIS_URL: redis://127.0.0.1:6379
       STORE_CORS: http://localhost:8000
       ADMIN_CORS: http://localhost:9000
@@ -94,28 +93,27 @@ jobs:
       - name: Build Medusa production artifact
         run: npm run build
 
-      - name: Prepare isolated Medusa schema
+      - name: Verify dedicated database starts empty
         run: |
-          PGPASSWORD=postgres psql \
-            -h 127.0.0.1 \
-            -U postgres \
-            -d pimata_medusa \
-            -v ON_ERROR_STOP=1 \
-            -c 'create schema if not exists medusa;'
+          set -euo pipefail
+          PUBLIC_TABLES="$(PGPASSWORD=postgres psql -h 127.0.0.1 -U postgres -d pimata_medusa -Atc "select count(*) from information_schema.tables where table_schema = 'public';")"
+          echo "public tables before migration: ${PUBLIC_TABLES}"
+          test "${PUBLIC_TABLES}" -eq 0
 
       - name: Run Medusa database migrations
         timeout-minutes: 8
         run: npm run predeploy
 
-      - name: Verify tables are isolated in medusa schema
+      - name: Verify Medusa tables in dedicated database
         run: |
           set -euo pipefail
-          MEDUSA_TABLES="$(PGPASSWORD=postgres psql -h 127.0.0.1 -U postgres -d pimata_medusa -Atc "select count(*) from information_schema.tables where table_schema = 'medusa';")"
           PUBLIC_TABLES="$(PGPASSWORD=postgres psql -h 127.0.0.1 -U postgres -d pimata_medusa -Atc "select count(*) from information_schema.tables where table_schema = 'public';")"
-          echo "medusa tables: ${MEDUSA_TABLES}"
-          echo "public tables: ${PUBLIC_TABLES}"
-          test "${MEDUSA_TABLES}" -gt 0
-          test "${PUBLIC_TABLES}" -eq 0
+          PRODUCT_TABLE="$(PGPASSWORD=postgres psql -h 127.0.0.1 -U postgres -d pimata_medusa -Atc "select count(*) from information_schema.tables where table_schema = 'public' and table_name = 'product';")"
+          CURRENCY_TABLE="$(PGPASSWORD=postgres psql -h 127.0.0.1 -U postgres -d pimata_medusa -Atc "select count(*) from information_schema.tables where table_schema = 'public' and table_name = 'currency';")"
+          echo "public tables after migration: ${PUBLIC_TABLES}"
+          test "${PUBLIC_TABLES}" -gt 50
+          test "${PRODUCT_TABLE}" -eq 1
+          test "${CURRENCY_TABLE}" -eq 1
 
       - name: Start Medusa and verify health
         timeout-minutes: 5
