@@ -72,6 +72,20 @@ jobs:
           set -euo pipefail
           test ! -f .env
           if grep -R -E 'APP_USR-[A-Za-z0-9_-]{20,}|sk_live_[A-Za-z0-9_-]{10,}' . --exclude-dir=node_modules; then exit 1; fi
+      - name: Parse Railway PowerShell provisioner
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path ./deploy-railway.ps1),
+            [ref]$tokens,
+            [ref]$errors
+          ) | Out-Null
+          if ($errors.Count -gt 0) {
+            $errors | ForEach-Object { Write-Error $_.Message }
+            exit 1
+          }
       - name: Install locked dependencies
         run: npm ci --no-audit --no-fund
       - name: Verify dependency manifests stay clean
@@ -145,8 +159,8 @@ jobs:
           set -euo pipefail
           (
             cd .medusa/server
-            NODE_ENV=production npm start
-          ) >/tmp/pimata-medusa.log 2>&1 &
+            NODE_ENV=production MEDUSA_WORKER_MODE=server DISABLE_MEDUSA_ADMIN=false npm start
+          ) >/tmp/pimata-medusa-server.log 2>&1 &
           PID=$!
           trap 'kill "${PID}" 2>/dev/null || true' EXIT
           for attempt in $(seq 1 60); do
@@ -155,6 +169,7 @@ jobs:
               echo "${STATUS}" | grep -q '"service":"pimata-commerce"'
               echo "${STATUS}" | grep -q '"isolation":"dedicated-postgresql-database"'
               echo "${STATUS}" | grep -q '"redis_configured":true'
+              echo "${STATUS}" | grep -q '"worker_mode":"server"'
               echo "${STATUS}" | grep -q '"mercado_pago_webhook_signature_configured":true'
 
               INVALID_WEBHOOK_CODE="$(curl -sS -o /tmp/pimata-invalid-mp-webhook.json -w '%{http_code}' \
@@ -164,9 +179,30 @@ jobs:
                 -H 'x-signature: ts=1781009491,v1=0000000000000000000000000000000000000000000000000000000000000000' \
                 --data '{"type":"payment","data":{"id":"123456789"}}')"
               test "${INVALID_WEBHOOK_CODE}" = "401"
+              kill "${PID}" 2>/dev/null || true
+              wait "${PID}" 2>/dev/null || true
+              trap - EXIT
               exit 0
             fi
             sleep 2
           done
-          cat /tmp/pimata-medusa.log
+          cat /tmp/pimata-medusa-server.log
           exit 1
+      - name: Start built Medusa artifact in worker mode
+        timeout-minutes: 3
+        run: |
+          set -euo pipefail
+          (
+            cd .medusa/server
+            NODE_ENV=production MEDUSA_WORKER_MODE=worker DISABLE_MEDUSA_ADMIN=true npm start
+          ) >/tmp/pimata-medusa-worker.log 2>&1 &
+          PID=$!
+          trap 'kill "${PID}" 2>/dev/null || true' EXIT
+          sleep 15
+          if ! kill -0 "${PID}" 2>/dev/null; then
+            cat /tmp/pimata-medusa-worker.log
+            exit 1
+          fi
+          kill "${PID}" 2>/dev/null || true
+          wait "${PID}" 2>/dev/null || true
+          trap - EXIT
