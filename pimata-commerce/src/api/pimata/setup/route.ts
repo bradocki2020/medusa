@@ -1,7 +1,7 @@
 import { createHash, timingSafeEqual } from "node:crypto"
 import type { MedusaRequest, MedusaResponse } from "@medusajs/framework/http"
-import bootstrapPiMaTa from "../../../scripts/bootstrap-pimata"
-import importVendaUnica from "../../../scripts/import-venda-unica"
+import { bootstrapPiMaTa } from "../../../lib/bootstrap-pimata"
+import { importVendaUnica } from "../../../lib/import-venda-unica"
 
 function safeSecretEquals(provided: string, expected: string): boolean {
   const providedHash = createHash("sha256").update(provided).digest()
@@ -23,9 +23,9 @@ export const POST = async (req: MedusaRequest, res: MedusaResponse) => {
 
   const body = (req.body || {}) as { import_legacy?: boolean }
 
-  await bootstrapPiMaTa({ container: req.scope } as any)
+  await bootstrapPiMaTa(req.scope as any)
 
-  let legacyImported = false
+  let legacy: { imported: number; skipped: number; total: number } | null = null
   if (body.import_legacy === true) {
     if (
       !process.env.PIMATA_LEGACY_SUPABASE_URL ||
@@ -37,14 +37,14 @@ export const POST = async (req: MedusaRequest, res: MedusaResponse) => {
       })
     }
 
-    await importVendaUnica({ container: req.scope } as any)
-    legacyImported = true
+    legacy = await importVendaUnica(req.scope as any)
   }
 
   return res.status(200).json({
     ok: true,
     bootstrap: "completed",
-    legacy_import: legacyImported ? "completed" : "skipped",
+    legacy_import: legacy ? "completed" : "skipped",
+    legacy,
     next: "remove PIMATA_SETUP_SECRET and redeploy",
   })
 }
