@@ -79,8 +79,10 @@ const redisModules = redisUrl
 
 module.exports = defineConfig({
   projectConfig: {
+    // IMPORTANTE: este DATABASE_URL deve apontar para um banco dedicado ao
+    // Medusa. Não use o banco legado do Venda Única. Em Medusa 2.20.1, usar
+    // databaseSchema customizado faz db:migrate e runtime divergirem.
     databaseUrl: process.env.DATABASE_URL,
-    databaseSchema: process.env.DATABASE_SCHEMA || "medusa",
     redisUrl,
     workerMode: (process.env.MEDUSA_WORKER_MODE || "shared") as
       | "shared"
