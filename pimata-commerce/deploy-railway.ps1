@@ -79,10 +79,16 @@ if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($existingProject)
 $mpToken = Require-EnvironmentVariable "MERCADO_PAGO_ACCESS_TOKEN"
 $mpWebhookSecret = Require-EnvironmentVariable "MERCADO_PAGO_WEBHOOK_SECRET"
 $melhorEnvioToken = Require-EnvironmentVariable "MELHOR_ENVIO_TOKEN"
-$originPostalCode = Require-EnvironmentVariable "MELHOR_ENVIO_ORIGIN_POSTAL_CODE"
+$originPostalCode = [Environment]::GetEnvironmentVariable("MELHOR_ENVIO_ORIGIN_POSTAL_CODE")
+if ([string]::IsNullOrWhiteSpace($originPostalCode)) {
+  $originPostalCode = "13806220"
+}
 
 $legacyUrl = [Environment]::GetEnvironmentVariable("PIMATA_LEGACY_SUPABASE_URL")
-$legacyKey = [Environment]::GetEnvironmentVariable("PIMATA_LEGACY_SUPABASE_ANON_KEY")
+$legacyKey = [Environment]::GetEnvironmentVariable("PIMATA_LEGACY_SUPABASE_PUBLISHABLE_KEY")
+if ([string]::IsNullOrWhiteSpace($legacyKey)) {
+  $legacyKey = [Environment]::GetEnvironmentVariable("PIMATA_LEGACY_SUPABASE_ANON_KEY")
+}
 $shouldImportLegacy = -not [string]::IsNullOrWhiteSpace($legacyUrl) -and -not [string]::IsNullOrWhiteSpace($legacyKey)
 
 $jwtSecret = New-RandomHex
@@ -142,7 +148,7 @@ $serverVariables = @(
 )
 
 if ($legacyUrl) { $serverVariables += "PIMATA_LEGACY_SUPABASE_URL=$legacyUrl" }
-if ($legacyKey) { $serverVariables += "PIMATA_LEGACY_SUPABASE_ANON_KEY=$legacyKey" }
+if ($legacyKey) { $serverVariables += "PIMATA_LEGACY_SUPABASE_PUBLISHABLE_KEY=$legacyKey" }
 railway variable set --service pimata-server @serverVariables
 if ($LASTEXITCODE -ne 0) { throw "Falha ao configurar variaveis do pimata-server." }
 
@@ -186,7 +192,7 @@ if ($shouldImportLegacy -and $setupResult.legacy_import -ne "completed") {
 }
 
 Write-Host "Removendo segredo temporario de setup e redeployando..."
-railway variable delete PIMATA_SETUP_SECRET --service pimata-server
+railway variable delete PIMATA_SETUP_SECRET --service pimata-server --yes
 if ($LASTEXITCODE -ne 0) { throw "Falha ao remover PIMATA_SETUP_SECRET." }
 railway service redeploy --service pimata-server
 if ($LASTEXITCODE -ne 0) { throw "Falha ao redeployar pimata-server apos remover setup secret." }
@@ -221,7 +227,7 @@ $workerVariables = @(
 )
 
 if ($legacyUrl) { $workerVariables += "PIMATA_LEGACY_SUPABASE_URL=$legacyUrl" }
-if ($legacyKey) { $workerVariables += "PIMATA_LEGACY_SUPABASE_ANON_KEY=$legacyKey" }
+if ($legacyKey) { $workerVariables += "PIMATA_LEGACY_SUPABASE_PUBLISHABLE_KEY=$legacyKey" }
 railway variable set --service pimata-worker @workerVariables
 if ($LASTEXITCODE -ne 0) { throw "Falha ao configurar variaveis do pimata-worker." }
 
