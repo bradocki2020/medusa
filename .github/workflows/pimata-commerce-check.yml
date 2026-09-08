@@ -1,0 +1,48 @@
+name: PiMaTa Commerce Check
+
+on:
+  push:
+    branches: [pimata-commerce]
+    paths:
+      - 'pimata-commerce/**'
+      - '.github/workflows/pimata-commerce-check.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  typecheck:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: pimata-commerce
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.12.0'
+          cache: npm
+          cache-dependency-path: pimata-commerce/package.json
+
+      - name: Verify no committed local secrets
+        run: |
+          set -euo pipefail
+          test ! -f .env
+          ! grep -R -E 'APP_USR-[A-Za-z0-9_-]{20,}|sk_live_[A-Za-z0-9_-]{10,}' . --exclude-dir=node_modules || false
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: TypeScript check
+        env:
+          NODE_ENV: development
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/pimata_medusa
+          DATABASE_SCHEMA: medusa
+          REDIS_URL: redis://localhost:6379
+          STORE_CORS: http://localhost:8000
+          ADMIN_CORS: http://localhost:9000
+          AUTH_CORS: http://localhost:8000,http://localhost:9000
+          JWT_SECRET: ci-jwt-secret-not-production
+          COOKIE_SECRET: ci-cookie-secret-not-production
+        run: npm run typecheck
