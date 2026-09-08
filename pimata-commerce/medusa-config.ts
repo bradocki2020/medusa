@@ -14,6 +14,13 @@ function requiredSecret(name: "JWT_SECRET" | "COOKIE_SECRET", devFallback: strin
 
 if (isProduction && !process.env.DATABASE_URL) throw new Error("DATABASE_URL is required in production")
 if (isProduction && !redisUrl) throw new Error("REDIS_URL is required in production")
+if (
+  isProduction &&
+  process.env.MERCADO_PAGO_ACCESS_TOKEN &&
+  !process.env.MERCADO_PAGO_WEBHOOK_SECRET
+) {
+  throw new Error("MERCADO_PAGO_WEBHOOK_SECRET is required in production when Mercado Pago is enabled")
+}
 
 const modules: any[] = []
 

@@ -51,6 +51,7 @@ jobs:
       DISABLE_MEDUSA_ADMIN: 'false'
       MEDUSA_BACKEND_URL: http://localhost:9000
       MERCADO_PAGO_ACCESS_TOKEN: TEST-CI-MERCADO-PAGO-TOKEN
+      MERCADO_PAGO_WEBHOOK_SECRET: ci-mercado-pago-webhook-secret
       MERCADO_PAGO_BACKEND_URL: https://backend-ci.example.com
       MERCADO_PAGO_STOREFRONT_URL: https://store-ci.example.com
       MELHOR_ENVIO_TOKEN: TEST-CI-MELHOR-ENVIO-TOKEN
@@ -75,6 +76,8 @@ jobs:
         run: npm ci --no-audit --no-fund
       - name: Verify dependency manifests stay clean
         run: git diff --exit-code -- package.json package-lock.json
+      - name: Verify Mercado Pago webhook signature
+        run: npm run test:webhook-signature
       - name: TypeScript check
         run: npm run typecheck
       - name: Build Medusa production artifact
@@ -139,6 +142,15 @@ jobs:
               echo "${STATUS}" | grep -q '"service":"pimata-commerce"'
               echo "${STATUS}" | grep -q '"isolation":"dedicated-postgresql-database"'
               echo "${STATUS}" | grep -q '"redis_configured":true'
+              echo "${STATUS}" | grep -q '"mercado_pago_webhook_signature_configured":true'
+
+              INVALID_WEBHOOK_CODE="$(curl -sS -o /tmp/pimata-invalid-mp-webhook.json -w '%{http_code}' \
+                -X POST 'http://127.0.0.1:9000/hooks/payment/mercadopago_mercadopago?data.id=123456789&type=payment' \
+                -H 'Content-Type: application/json' \
+                -H 'x-request-id: ci-invalid-request' \
+                -H 'x-signature: ts=1781009491,v1=0000000000000000000000000000000000000000000000000000000000000000' \
+                --data '{"type":"payment","data":{"id":"123456789"}}')"
+              test "${INVALID_WEBHOOK_CODE}" = "401"
               exit 0
             fi
             sleep 2

@@ -13,6 +13,7 @@ export const GET = async (_req: MedusaRequest, res: MedusaResponse) => {
     redis_configured: Boolean(process.env.REDIS_URL),
     worker_mode: process.env.MEDUSA_WORKER_MODE || "shared",
     mercado_pago_configured: Boolean(process.env.MERCADO_PAGO_ACCESS_TOKEN),
+    mercado_pago_webhook_signature_configured: Boolean(process.env.MERCADO_PAGO_WEBHOOK_SECRET),
     melhor_envio_configured: Boolean(
       process.env.MELHOR_ENVIO_TOKEN && process.env.MELHOR_ENVIO_ORIGIN_POSTAL_CODE
     ),
