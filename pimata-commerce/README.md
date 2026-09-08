@@ -44,6 +44,29 @@ Exemplo de corpo:
 }
 ```
 
+## Bootstrap automático da loja Brasil
+
+Depois das migrations, execute:
+
+```bash
+npm run bootstrap
+```
+
+O script `src/scripts/bootstrap-pimata.ts` configura de forma idempotente:
+
+- moeda padrão BRL;
+- região `Brasil`;
+- região fiscal BR;
+- canal de vendas `PiMaTa Online`;
+- local `Estoque PiMaTa`;
+- perfil padrão para produtos físicos;
+- publishable API key `PiMaTa Storefront`;
+- canal e estoque como padrões da store.
+
+Ele pode ser executado novamente sem a intenção de duplicar esses recursos. A CI executa o bootstrap duas vezes e verifica que os registros principais continuam únicos.
+
+O endereço criado no estoque é deliberadamente um placeholder operacional. O endereço completo deve ser configurado no Admin antes da produção.
+
 ## Importar os anúncios atuais do Venda Única
 
 Configure em `.env`:
@@ -120,8 +143,11 @@ O workflow `PiMaTa Commerce Check` valida:
 6. `medusa db:migrate`;
 7. criação das tabelas principais do Medusa;
 8. Redis 7;
-9. inicialização real do backend;
-10. `GET /health` respondendo `OK`.
+9. bootstrap Brasil;
+10. segunda execução do bootstrap para validar idempotência;
+11. registros principais da PiMaTa no banco;
+12. inicialização real do backend;
+13. `GET /health` respondendo `OK`.
 
 Depois de iniciar o backend:
 
@@ -134,10 +160,11 @@ Depois de iniciar o backend:
 1. manter `venda.pimata.app` atual em produção;
 2. provisionar PostgreSQL dedicado e Redis;
 3. subir Medusa em um hostname separado;
-4. criar estoque/local, canal de vendas, região BRL e perfil de envio no Admin;
-5. importar os anúncios ativos com `npm run import:legacy`;
-6. validar catálogo, estoque, checkout, pagamento e frete;
-7. conectar uma storefront nova ao Store API do Medusa;
-8. somente após os testes, trocar a home de `venda.pimata.app` para a nova storefront.
+4. executar migrations e `npm run bootstrap`;
+5. configurar o endereço real de origem/estoque;
+6. importar os anúncios ativos com `npm run import:legacy`;
+7. validar catálogo, estoque, checkout, pagamento e frete;
+8. conectar uma storefront nova ao Store API do Medusa;
+9. somente após os testes, trocar a home de `venda.pimata.app` para a nova storefront.
 
-O domínio atual não deve ser apontado para o Medusa antes da etapa 8.
+O domínio atual não deve ser apontado para o Medusa antes da etapa 9.
