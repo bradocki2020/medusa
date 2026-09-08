@@ -27,13 +27,14 @@ export const POST = async (req: MedusaRequest, res: MedusaResponse) => {
 
   let legacy: { imported: number; skipped: number; total: number } | null = null
   if (body.import_legacy === true) {
-    if (
-      !process.env.PIMATA_LEGACY_SUPABASE_URL ||
-      !process.env.PIMATA_LEGACY_SUPABASE_ANON_KEY
-    ) {
+    const legacyKey =
+      process.env.PIMATA_LEGACY_SUPABASE_PUBLISHABLE_KEY ||
+      process.env.PIMATA_LEGACY_SUPABASE_ANON_KEY
+
+    if (!process.env.PIMATA_LEGACY_SUPABASE_URL || !legacyKey) {
       return res.status(400).json({
         message:
-          "PIMATA_LEGACY_SUPABASE_URL e PIMATA_LEGACY_SUPABASE_ANON_KEY são obrigatórios para importar o legado.",
+          "PIMATA_LEGACY_SUPABASE_URL e uma chave pública Supabase (PUBLISHABLE_KEY ou ANON_KEY legado) são obrigatórios para importar o legado.",
       })
     }
 
