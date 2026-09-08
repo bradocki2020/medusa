@@ -1,0 +1,50 @@
+import { createHash, timingSafeEqual } from "node:crypto"
+import type { MedusaRequest, MedusaResponse } from "@medusajs/framework/http"
+import bootstrapPiMaTa from "../../../scripts/bootstrap-pimata"
+import importVendaUnica from "../../../scripts/import-venda-unica"
+
+function safeSecretEquals(provided: string, expected: string): boolean {
+  const providedHash = createHash("sha256").update(provided).digest()
+  const expectedHash = createHash("sha256").update(expected).digest()
+  return timingSafeEqual(providedHash, expectedHash)
+}
+
+export const POST = async (req: MedusaRequest, res: MedusaResponse) => {
+  const expected = process.env.PIMATA_SETUP_SECRET
+  if (!expected) {
+    return res.status(404).json({ message: "Not found" })
+  }
+
+  const header = req.headers["x-pimata-setup-secret"]
+  const provided = Array.isArray(header) ? header[0] : header
+  if (!provided || !safeSecretEquals(String(provided), expected)) {
+    return res.status(401).json({ message: "Invalid setup secret" })
+  }
+
+  const body = (req.body || {}) as { import_legacy?: boolean }
+
+  await bootstrapPiMaTa({ container: req.scope } as any)
+
+  let legacyImported = false
+  if (body.import_legacy === true) {
+    if (
+      !process.env.PIMATA_LEGACY_SUPABASE_URL ||
+      !process.env.PIMATA_LEGACY_SUPABASE_ANON_KEY
+    ) {
+      return res.status(400).json({
+        message:
+          "PIMATA_LEGACY_SUPABASE_URL e PIMATA_LEGACY_SUPABASE_ANON_KEY são obrigatórios para importar o legado.",
+      })
+    }
+
+    await importVendaUnica({ container: req.scope } as any)
+    legacyImported = true
+  }
+
+  return res.status(200).json({
+    ok: true,
+    bootstrap: "completed",
+    legacy_import: legacyImported ? "completed" : "skipped",
+    next: "remove PIMATA_SETUP_SECRET and redeploy",
+  })
+}
