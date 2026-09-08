@@ -41,11 +41,13 @@ export async function importVendaUnica(container: ExecArgs["container"]) {
   const query = container.resolve(ContainerRegistrationKeys.QUERY)
 
   const baseUrl = process.env.PIMATA_LEGACY_SUPABASE_URL
-  const apiKey = process.env.PIMATA_LEGACY_SUPABASE_ANON_KEY
+  const apiKey =
+    process.env.PIMATA_LEGACY_SUPABASE_PUBLISHABLE_KEY ||
+    process.env.PIMATA_LEGACY_SUPABASE_ANON_KEY
 
   if (!baseUrl || !apiKey) {
     throw new Error(
-      "Defina PIMATA_LEGACY_SUPABASE_URL e PIMATA_LEGACY_SUPABASE_ANON_KEY para importar o Venda Única legado."
+      "Defina PIMATA_LEGACY_SUPABASE_URL e PIMATA_LEGACY_SUPABASE_PUBLISHABLE_KEY (ou PIMATA_LEGACY_SUPABASE_ANON_KEY legado) para importar o Venda Única."
     )
   }
 
