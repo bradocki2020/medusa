@@ -115,6 +115,26 @@ jobs:
           test "${PRODUCT_TABLE}" -eq 1
           test "${CURRENCY_TABLE}" -eq 1
 
+      - name: Bootstrap PiMaTa Brazil store
+        timeout-minutes: 5
+        run: npm run bootstrap
+
+      - name: Verify bootstrap is idempotent
+        timeout-minutes: 5
+        run: npm run bootstrap
+
+      - name: Verify PiMaTa bootstrap records
+        run: |
+          set -euo pipefail
+          BR_REGION="$(PGPASSWORD=postgres psql -h 127.0.0.1 -U postgres -d pimata_medusa -Atc "select count(*) from region where name = 'Brasil' and currency_code = 'brl';")"
+          PIMATA_CHANNEL="$(PGPASSWORD=postgres psql -h 127.0.0.1 -U postgres -d pimata_medusa -Atc "select count(*) from sales_channel where name = 'PiMaTa Online';")"
+          PIMATA_LOCATION="$(PGPASSWORD=postgres psql -h 127.0.0.1 -U postgres -d pimata_medusa -Atc "select count(*) from stock_location where name = 'Estoque PiMaTa';")"
+          PUBLISHABLE_KEY="$(PGPASSWORD=postgres psql -h 127.0.0.1 -U postgres -d pimata_medusa -Atc "select count(*) from api_key where title = 'PiMaTa Storefront' and type = 'publishable';")"
+          test "${BR_REGION}" -eq 1
+          test "${PIMATA_CHANNEL}" -eq 1
+          test "${PIMATA_LOCATION}" -eq 1
+          test "${PUBLISHABLE_KEY}" -eq 1
+
       - name: Start Medusa and verify health
         timeout-minutes: 5
         run: |
