@@ -6,7 +6,16 @@ export const GET = async (_req: MedusaRequest, res: MedusaResponse) => {
     platform: "medusa",
     medusa_version: "2.20.1",
     sale_model: "single-stock-ready",
-    database_schema: process.env.DATABASE_SCHEMA || "medusa",
+    database: {
+      configured: Boolean(process.env.DATABASE_URL),
+      isolation: "dedicated-postgresql-database",
+    },
+    redis_configured: Boolean(process.env.REDIS_URL),
+    worker_mode: process.env.MEDUSA_WORKER_MODE || "shared",
+    mercado_pago_configured: Boolean(process.env.MERCADO_PAGO_ACCESS_TOKEN),
+    melhor_envio_configured: Boolean(
+      process.env.MELHOR_ENVIO_TOKEN && process.env.MELHOR_ENVIO_ORIGIN_POSTAL_CODE
+    ),
     legacy_storefront:
       process.env.PIMATA_LEGACY_STOREFRONT || "https://venda.pimata.app",
   })
