@@ -73,6 +73,13 @@ jobs:
           if grep -R -E 'APP_USR-[A-Za-z0-9_-]{20,}|sk_live_[A-Za-z0-9_-]{10,}' . --exclude-dir=node_modules; then exit 1; fi
       - name: Install dependencies
         run: npm install --no-audit --no-fund
+      - name: Export generated package lock
+        uses: actions/upload-artifact@v4
+        with:
+          name: pimata-commerce-package-lock
+          path: pimata-commerce/package-lock.json
+          if-no-files-found: error
+          retention-days: 1
       - name: TypeScript check
         run: npm run typecheck
       - name: Build Medusa production artifact
