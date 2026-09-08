@@ -36,38 +36,35 @@ export const createVendaUnicaWorkflow = createWorkflow(
       fields: ["id", "name"],
     }).config({ name: "pimata-get-shipping-profile" })
 
-    const inventoryItemsData = transform(
-      { input, stores },
-      (data) => {
-        const store = data.stores[0]
-        if (!store?.default_location_id) {
-          throw new Error(
-            "A loja Medusa precisa ter um estoque/local padrão antes de criar Venda Única."
-          )
-        }
-
-        const sku =
-          data.input.sku ||
-          `VU-${String(
-            data.input.source_id || data.input.handle || Date.now()
-          )}`.toUpperCase()
-
-        return [
-          {
-            sku,
-            title: data.input.title,
-            description: data.input.description || "Peça única PiMaTa",
-            requires_shipping: data.input.requires_shipping !== false,
-            location_levels: [
-              {
-                location_id: store.default_location_id,
-                stocked_quantity: 1,
-              },
-            ],
-          },
-        ]
+    const inventoryItemsData = transform({ input, stores }, (data) => {
+      const store = data.stores[0]
+      if (!store?.default_location_id) {
+        throw new Error(
+          "A loja Medusa precisa ter um estoque/local padrão antes de criar Venda Única."
+        )
       }
-    )
+
+      const sku =
+        data.input.sku ||
+        `VU-${String(
+          data.input.source_id || data.input.handle || Date.now()
+        )}`.toUpperCase()
+
+      return [
+        {
+          sku,
+          title: data.input.title,
+          description: data.input.description || "Peça única PiMaTa",
+          requires_shipping: data.input.requires_shipping !== false,
+          location_levels: [
+            {
+              location_id: store.default_location_id,
+              stocked_quantity: 1,
+            },
+          ],
+        },
+      ]
+    })
 
     const inventoryItems = createInventoryItemsWorkflow.runAsStep({
       input: {
@@ -91,15 +88,9 @@ export const createVendaUnicaWorkflow = createWorkflow(
             "A loja Medusa precisa ter um perfil de envio antes de criar Venda Única."
           )
         }
-        if (!data.inventoryItems[0]?.id) {
+        if (!data.inventoryItems[0]?.id || !data.inventoryItems[0]?.sku) {
           throw new Error("Falha ao criar o item de estoque da Venda Única.")
         }
-
-        const sku =
-          data.input.sku ||
-          `VU-${String(
-            data.input.source_id || data.input.handle || Date.now()
-          )}`.toUpperCase()
 
         const images = (data.input.images || []).filter(Boolean)
         const metadata: Record<string, string | number | boolean> = {
@@ -136,8 +127,9 @@ export const createVendaUnicaWorkflow = createWorkflow(
           variants: [
             {
               title: "Peça única",
-              sku,
+              sku: data.inventoryItems[0].sku,
               manage_inventory: true,
+              allow_backorder: false,
               options: {
                 Peça: "Única",
               },
